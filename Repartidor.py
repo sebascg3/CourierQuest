@@ -2,6 +2,7 @@ import arcade
 from datetime import datetime
 import Pedido
 import Inventario
+import Clima
 #####coordenadas en clase, metodo mover
 class Repartidor(arcade.Sprite):
 
@@ -59,16 +60,16 @@ class Repartidor(arcade.Sprite):
 
         return True
 
-    def actualizar_resistencia(self, clima: str):
+    def actualizar_resistencia(self, clima: Clima):
         gasto = 0.5
         if self.peso_total > 3:
             gasto += 0.2 * (self.peso_total - 3)
 
-        if clima in ("lluvia", "viento"):
+        if clima.tipo in ("lluvia", "viento"):
             gasto += 0.1
-        elif clima == "tormenta":
+        elif clima.tipo == "tormenta":
             gasto += 0.3
-        elif clima == "calor":
+        elif clima.tipo == "calor":
             gasto += 0.2
 
         self.resistencia -= gasto
@@ -86,7 +87,8 @@ class Repartidor(arcade.Sprite):
 
         self.resistencia = min(100, self.resistencia + recuperacion)
 
-    def calcular_velocidad(self, clima_mult: float, superficie: float):
+    def calcular_velocidad(self, clima_mult: Clima, superficie: float):
+        clima_mult = Clima.obtener_modificador_clima(clima_mult)
         Mpeso = max(0.8, 1 - 0.03 * self.peso_total)
         Mrep = 1.03 if self.reputacion >= 90 else 1.0
         Mres = 1.0 if self.estadoFisico == "Normal" else (0.8 if self.estadoFisico == "Cansado" else 0.0)

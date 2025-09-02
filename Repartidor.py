@@ -3,31 +3,37 @@ from datetime import datetime
 import Pedido
 import Inventario
 import Clima
-#####coordenadas en clase, metodo mover
+import Coordenada
 class Repartidor(arcade.Sprite):
 
-    def __init__(self, imagen: str, escala: float = 1.0, v0: float = 3.0):
+    def __init__(self, imagen: str, escala: float = 1.0, v0: float = 3.0, inventario: Inventario = None, coordenada: Coordenada = None):
         super().__init__(imagen, escala)
 
         self.nombre="Repartidor"
         self.resistencia = 100         
         self.reputacion = 70           
         self.ingresos = 0              
-        self.inventario = Inventario() 
+        self.inventario = Inventario()
+        self.coordenada = Coordenada()
         self.peso_total = 0            
         self.velocidad_base = v0       
 
         self.estadoFisico = "Normal"
         self.estado="Jugando"        
         self.tiempo_actual = datetime.now()
-        self.x = 0
-        self.y = 0
+
 
     def aceptar_pedido(self, pedido: Pedido):
         self.inventario.agregar_pedido(pedido)
         self.peso_total += pedido.weight
 
-    def entregar_pedido(self, pedido_id: str, tiempo_entrega: datetime):
+    def pickup(self, pedido: Pedido):
+        if self.inventario.agregar_pedido(pedido):
+            self.peso_total += pedido.weight
+            return True
+        return False
+
+    def dropoff(self, pedido_id: str, tiempo_entrega: datetime):
         pedido = self.inventario.buscar_pedido(pedido_id)
         if not pedido:
             return False
@@ -94,3 +100,10 @@ class Repartidor(arcade.Sprite):
         Mres = 1.0 if self.estadoFisico == "Normal" else (0.8 if self.estadoFisico == "Cansado" else 0.0)
 
         return self.velocidad_base * clima_mult * Mpeso * Mrep * Mres * superficie
+
+    def mover(self, coord: Coordenada):
+        self.coordenada.x += coord.x
+        self.coordenada.y += coord.y
+
+        self.center_x = self.coordenada.x * 30
+        self.center_y = self.coordenada.y * 30

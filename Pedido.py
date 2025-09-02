@@ -1,7 +1,13 @@
-##### enlazar con clase coordenada para dejar y recoger, tipo de prioridad y desbloqueo
+import Coordenada
 class Pedido:
-    def __init__(self, num, peso, deadline, pago):
-        self.num = num
+    def __init__(self, id, peso, deadline, pago, prioridad=0, coord_recoger=None, coord_entregar=None):
+        self.id = id
         self.peso = peso
         self.deadline = deadline
         self.pago = pago
+        self.prioridad = prioridad  
+        self.coord_recoger = coord_recoger 
+        self.coord_entregar = coord_entregar  
+
+
+

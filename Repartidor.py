@@ -4,32 +4,33 @@ import Pedido
 import Inventario
 import Clima
 import Coordenada
+
 class Repartidor(arcade.Sprite):
 
-    def __init__(self, imagen: str, escala: float = 1.0, v0: float = 3.0, inventario: Inventario = None, coordenada: Coordenada = None):
-        super().__init__(imagen, escala)
+    def __init__(self, escala: float = 1.0, v0: float = 3.0):
+        # No se pasa imagen, inicializamos Sprite vacío
+        super().__init__(filename=None, scale=escala)
 
-        self.nombre="Repartidor"
-        self.resistencia = 100         
-        self.reputacion = 70           
-        self.ingresos = 0              
+        self.nombre = "Repartidor"
+        self.resistencia = 100
+        self.reputacion = 70
+        self.ingresos = 0
         self.inventario = Inventario()
-        self.coordenada = Coordenada()
-        self.peso_total = 0            
-        self.velocidad_base = v0       
+        self.coordenada = Coordenada.Coordenada(0, 0)
+        self.peso_total = 0
+        self.velocidad_base = v0
 
         self.estadoFisico = "Normal"
-        self.estado="Jugando"        
+        self.estado = "Jugando"
         self.tiempo_actual = datetime.now()
-
 
     def aceptar_pedido(self, pedido: Pedido):
         self.inventario.agregar_pedido(pedido)
-        self.peso_total += pedido.weight
+        self.peso_total += pedido.peso
 
     def pickup(self, pedido: Pedido):
         if self.inventario.agregar_pedido(pedido):
-            self.peso_total += pedido.weight
+            self.peso_total += pedido.peso
             return True
         return False
 
@@ -39,7 +40,7 @@ class Repartidor(arcade.Sprite):
             return False
 
         self.inventario.quitar_pedido(pedido_id)
-        self.peso_total -= pedido.weight
+        self.peso_total -= pedido.peso
 
         deadline = datetime.fromisoformat(pedido.deadline)
         delta = (tiempo_entrega - deadline).total_seconds()
@@ -61,8 +62,7 @@ class Repartidor(arcade.Sprite):
         self.ingresos += pago
 
         if self.reputacion < 20:
-         self.estado = "Derrota"
-         #falta acá que se termine el juego pq está derrotado
+            self.estado = "Derrota"
 
         return True
 
@@ -71,11 +71,11 @@ class Repartidor(arcade.Sprite):
         if self.peso_total > 3:
             gasto += 0.2 * (self.peso_total - 3)
 
-        if clima.tipo in ("lluvia", "viento"):
+        if getattr(clima, "tipo", None) in ("lluvia", "viento"):
             gasto += 0.1
-        elif clima.tipo == "tormenta":
+        elif getattr(clima, "tipo", None) == "tormenta":
             gasto += 0.3
-        elif clima.tipo == "calor":
+        elif getattr(clima, "tipo", None) == "calor":
             gasto += 0.2
 
         self.resistencia -= gasto
@@ -90,20 +90,18 @@ class Repartidor(arcade.Sprite):
         recuperacion = 5 * segundos
         if en_punto_descanso:
             recuperacion = 10 * segundos
-
         self.resistencia = min(100, self.resistencia + recuperacion)
 
     def calcular_velocidad(self, clima_mult: Clima, superficie: float):
-        clima_mult = Clima.obtener_modificador_clima(clima_mult)
+        clima_mult_val = getattr(clima_mult, "obtenerMultiplicadorVelocidad", lambda: 1.0)()
         Mpeso = max(0.8, 1 - 0.03 * self.peso_total)
         Mrep = 1.03 if self.reputacion >= 90 else 1.0
         Mres = 1.0 if self.estadoFisico == "Normal" else (0.8 if self.estadoFisico == "Cansado" else 0.0)
 
-        return self.velocidad_base * clima_mult * Mpeso * Mrep * Mres * superficie
+        return self.velocidad_base * clima_mult_val * Mpeso * Mrep * Mres * superficie
 
     def mover(self, coord: Coordenada):
         self.coordenada.x += coord.x
         self.coordenada.y += coord.y
-
         self.center_x = self.coordenada.x * 30
         self.center_y = self.coordenada.y * 30

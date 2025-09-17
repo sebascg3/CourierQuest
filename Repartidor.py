@@ -1,15 +1,14 @@
 import arcade
 from datetime import datetime
 import Pedido
-import Inventario
+from Inventario import Inventario
 import Clima
 import Coordenada
 
 class Repartidor(arcade.Sprite):
 
-    def __init__(self, escala: float = 1.0, v0: float = 3.0):
-        # No se pasa imagen, inicializamos Sprite vacío
-        super().__init__(filename=None, scale=escala)
+    def __init__(self, imagen: str = None, escala: float = 1.0, v0: float = 3.0):
+        super().__init__(filename=imagen, scale=escala)
 
         self.nombre = "Repartidor"
         self.resistencia = 100

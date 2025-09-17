@@ -6,9 +6,9 @@ import Clima
 import Coordenada
 
 class Repartidor(arcade.Sprite):
+    def __init__(self, *args, **kwargs): 
+        super().__init__(*args, **kwargs)
 
-    def __init__(self, imagen: str = None, escala: float = 1.0, v0: float = 3.0):
-        super().__init__(filename=imagen, scale=escala)
 
         self.nombre = "Repartidor"
         self.resistencia = 100
@@ -17,7 +17,7 @@ class Repartidor(arcade.Sprite):
         self.inventario = Inventario()
         self.coordenada = Coordenada.Coordenada(0, 0)
         self.peso_total = 0
-        self.velocidad_base = v0
+        self.velocidad_base = 0
 
         self.estadoFisico = "Normal"
         self.estado = "Jugando"

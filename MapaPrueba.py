@@ -1,6 +1,8 @@
 import requests
 import arcade
 import random
+from datetime import datetime
+from Pedido import Pedido
 from Repartidor import Repartidor 
 
 CELL_SIZE = 50
@@ -35,6 +37,16 @@ class MapaWindow(arcade.Window):
         # Texturas para tiles
         self.tex_parque = arcade.load_texture("assets/Parque.png")
         self.tex_edificio = arcade.load_texture("assets/Edificio.png")
+
+
+        self.pedidos_dict = {} 
+        self.pickup_list = arcade.SpriteList()
+        self.dropoff_list = arcade.SpriteList()
+        self.cargar_pedidos()
+
+    
+
+
 
         # Elegir posición inicial válida
         while True:
@@ -80,6 +92,12 @@ class MapaWindow(arcade.Window):
                 arcade.draw_rect_outline(rect, arcade.color.BLACK, 1)
 
         self.player_list.draw()
+
+        self.pickup_list.draw()
+        self.dropoff_list.draw()
+        
+
+
 
     def on_key_press(self, key, modifiers):
         # Registrar dirección activa
@@ -129,6 +147,57 @@ class MapaWindow(arcade.Window):
             self.target_y = (height * CELL_SIZE - (new_row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
             self.moving = True
 
+
+
+    def celda_a_pixeles(self, row, col):
+        x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
+        y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
+        return x, y
+    
+    def crear_pedido(self, pickup_x, pickup_y, dropoff_x, dropoff_y, pedido_id):
+          pickup_sprite = arcade.Sprite("assets/pickup.png", scale=0.8)
+          pickup_sprite.center_x = pickup_x
+          pickup_sprite.center_y = pickup_y
+          pickup_sprite.pedido_id = pedido_id
+          self.pickup_list.append(pickup_sprite)
+          dropoff_sprite = arcade.Sprite("assets/dropoff.png", scale=0.8)
+          dropoff_sprite.center_x = dropoff_x
+          dropoff_sprite.center_y = dropoff_y
+          dropoff_sprite.pedido_id = pedido_id
+          self.dropoff_list.append(dropoff_sprite)
+
+    def cargar_pedidos(self):
+        response = requests.get(f"{BASE_URL}/city/jobs").json()
+        jobs = response.get("data", [])
+
+        for p in jobs:
+           pedido_obj = Pedido(
+            id=p["id"],
+            peso=p["weight"],
+            deadline=p["deadline"],
+            pago=p["payout"],
+            prioridad=p.get("priority", 0),
+            coord_recoger=p["pickup"],
+            coord_entregar=p["dropoff"]
+        )
+           self.pedidos_dict[pedido_obj.id] = pedido_obj
+
+           px, py = self.celda_a_pixeles(*pedido_obj.coord_recoger)
+           dx, dy = self.celda_a_pixeles(*pedido_obj.coord_entregar)
+           self.crear_pedido(px, py, dx, dy, pedido_obj.id)
+
+
+
+
+
+
+
+
+
+
+
+
+
     def on_update(self, delta_time):
         if self.moving:
             dx = self.target_x - self.player_sprite.center_x
@@ -147,8 +216,35 @@ class MapaWindow(arcade.Window):
                 # Movimiento suave
                 self.player_sprite.center_x += self.move_speed * dx / dist
                 self.player_sprite.center_y += self.move_speed * dy / dist
+
+        #Colisiones con los dropoffs y pickups
+        pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
+        for pickup in pickups_hit:
+         pedido_obj = self.pedidos_dict[pickup.pedido_id]
+         print(f"Se recolectó el pedido {pickup.pedido_id}")
+         self.player_sprite.pickup(pedido_obj, datetime.now())
+         pickup.remove_from_sprite_lists()
+
+        dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
+        for dropoff in dropoffs_hit:
+          pedido_obj = self.pedidos_dict.get(dropoff.pedido_id)
+          if not pedido_obj:
+           continue
+          
+          if self.player_sprite.inventario.buscar_pedido(pedido_obj.id):
+            #para saber por mientras los dropoffs
+            print(f"Se entregó el pedido {dropoff.pedido_id}")
+            self.player_sprite.dropoff(pedido_obj, datetime.now())
+            dropoff.remove_from_sprite_lists()
+          else:
+           print(f"No se puede entregar {dropoff.pedido_id}, no está en el inventario.")
+
+
+
+
         
 
 if __name__ == "__main__":
+
     MapaWindow()
     arcade.run()

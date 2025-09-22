@@ -27,11 +27,14 @@ class Repartidor(arcade.Sprite):
         self.inventario.agregar_pedido(pedido)
         self.peso_total += pedido.peso
 
-    def pickup(self, pedido: Pedido):
-        if self.inventario.agregar_pedido(pedido):
-            self.peso_total += pedido.peso
-            return True
-        return False
+    def pickup(self, pedido: Pedido, tiempo: datetime = None):
+       tiempo = tiempo or datetime.now() 
+       if self.inventario.agregar_pedido(pedido):
+         self.peso_total += pedido.peso
+         pedido.tiempo_recogido = tiempo
+         return True
+       return False
+
 
     def dropoff(self, pedido_id: str, tiempo_entrega: datetime):
         pedido = self.inventario.buscar_pedido(pedido_id)

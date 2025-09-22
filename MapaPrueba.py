@@ -95,8 +95,31 @@ class MapaWindow(arcade.Window):
 
         self.pickup_list.draw()
         self.dropoff_list.draw()
-        
 
+       
+
+        texto = ""
+        pedidos = []
+        nodo = self.player_sprite.inventario.inicio
+        while nodo:
+         pedidos.append(nodo.pedido.id)
+         nodo = nodo.siguiente
+
+        texto = f"Pedidos: {', '.join(pedidos) if pedidos else 'Ninguno'}\n"
+        texto += f"Peso: {self.player_sprite.peso_total:.1f}/{self.player_sprite.inventario.peso_maximo}\n"
+        texto += f"Ingresos: ${self.player_sprite.ingresos:.2f}\n"
+        texto += f"Reputación: {self.player_sprite.reputacion}"
+
+        arcade.draw_text(
+         texto,
+         x=10, 
+         y=self.window_height - 10, 
+         color=arcade.color.BLACK,
+         font_size=12,
+         anchor_y="top",
+         multiline=True,
+         width=200 
+  )
 
 
     def on_key_press(self, key, modifiers):
@@ -188,16 +211,6 @@ class MapaWindow(arcade.Window):
 
 
 
-
-
-
-
-
-
-
-
-
-
     def on_update(self, delta_time):
         if self.moving:
             dx = self.target_x - self.player_sprite.center_x
@@ -234,7 +247,7 @@ class MapaWindow(arcade.Window):
           if self.player_sprite.inventario.buscar_pedido(pedido_obj.id):
             #para saber por mientras los dropoffs
             print(f"Se entregó el pedido {dropoff.pedido_id}")
-            self.player_sprite.dropoff(pedido_obj, datetime.now())
+            self.player_sprite.dropoff(pedido_obj.id, datetime.now())
             dropoff.remove_from_sprite_lists()
           else:
            print(f"No se puede entregar {dropoff.pedido_id}, no está en el inventario.")

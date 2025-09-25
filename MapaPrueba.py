@@ -36,6 +36,14 @@ class MapaWindow(arcade.Window):
         self.pedidos_dict = {} 
         self.pickup_list = arcade.SpriteList()
         self.dropoff_list = arcade.SpriteList()
+        self.pedidos_pendientes = []
+        self.pedidos_activos = {}
+        self.pedido_actual = None
+        self.mostrar_pedido = False
+        self.tiempo_ultimo_popup = 0
+        self.tiempo_global = 0  
+        self.intervalo_popup = 30 
+
         self.cargar_pedidos()
         while True:
             start_row = random.randint(0, ROWS - 1)
@@ -53,6 +61,34 @@ class MapaWindow(arcade.Window):
         self.moving = False
         self.move_speed = 10
         self.player_list.append(self.player_sprite)
+
+
+
+    def draw_popup_pedido(self):
+     if self.mostrar_pedido and self.pedido_actual:
+        ancho, alto = 400, 150
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.BLACK)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.BLACK, 2)
+
+        arcade.draw_text(#cambiar esto para que no quede pegado
+            f"Nuevo pedido: {self.pedido_actual.id}\n"
+            f"Peso: {self.pedido_actual.peso}\n"
+            f"Pago: ${self.pedido_actual.pago}",
+            x + 20, y + alto - 20,
+            arcade.color.WHITE, 14,
+            anchor_x="left", anchor_y="top"
+        )
+        arcade.draw_text(
+            "[A]ceptar   [R]echazar",
+            x + 120, y + 55,
+            arcade.color.WHITE, 14
+        )
+
+
+
 
     def on_draw(self):
         self.clear()
@@ -105,6 +141,7 @@ class MapaWindow(arcade.Window):
             anchor_x="right",
             anchor_y="top"
         )
+        self.draw_popup_pedido()
 
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.UP, arcade.key.DOWN, arcade.key.LEFT, arcade.key.RIGHT):
@@ -112,7 +149,26 @@ class MapaWindow(arcade.Window):
         self.try_move()
 
     def on_key_release(self, key, modifiers):
-        if self.active_direction == key:
+       if self.mostrar_pedido and self.pedido_actual:
+           if key == arcade.key.A: 
+               pedido = self.pedido_actual
+               #Para saber cuando acepta
+               print(f"Pedido {pedido.id} aceptado")
+               self.pedidos_activos[pedido.id] = pedido 
+               pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
+               dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
+               self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
+
+               self.mostrar_pedido = False
+               self.pedido_actual = None
+
+           elif key == arcade.key.R:  
+                #Parafijarnos los que rechaza
+                print(f"Pedido {self.pedido_actual.id} rechazado")
+                self.mostrar_pedido = False
+                self.pedido_actual = None
+
+       if self.active_direction == key:
             self.active_direction = None
 
     def try_move(self):
@@ -178,11 +234,9 @@ class MapaWindow(arcade.Window):
                 prioridad=p.get("priority", 0),
                 coord_recoger=p["pickup"],
                 coord_entregar=p["dropoff"]
-            )
+            )        
             self.pedidos_dict[pedido_obj.id] = pedido_obj
-            px, py = self.celda_a_pixeles(*pedido_obj.coord_recoger)
-            dx, dy = self.celda_a_pixeles(*pedido_obj.coord_entregar)
-            self.crear_pedido(px, py, dx, dy, pedido_obj.id)
+            self.pedidos_pendientes.append(pedido_obj)
 
     def on_update(self, delta_time):
         if self.total_time > 0:
@@ -204,6 +258,7 @@ class MapaWindow(arcade.Window):
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
         for pickup in pickups_hit:
             pedido_obj = self.pedidos_dict[pickup.pedido_id]
+            #
             print(f"Se recolectó el pedido {pickup.pedido_id}")
             self.player_sprite.pickup(pedido_obj, datetime.now())
             pickup.remove_from_sprite_lists()
@@ -213,11 +268,21 @@ class MapaWindow(arcade.Window):
             if not pedido_obj:
                 continue
             if self.player_sprite.inventario.buscar_pedido(pedido_obj.id):
+                #
                 print(f"Se entregó el pedido {dropoff.pedido_id}")
                 self.player_sprite.dropoff(pedido_obj.id, datetime.now())
                 dropoff.remove_from_sprite_lists()
             else:
+                #
                 print(f"No se puede entregar {dropoff.pedido_id}, no está en el inventario.")
+
+        self.tiempo_global += delta_time
+        if not self.mostrar_pedido and self.pedidos_pendientes:
+               if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:
+                   self.pedido_actual = self.pedidos_pendientes.pop(0)
+                   self.mostrar_pedido = True
+                   self.tiempo_ultimo_popup = self.tiempo_global
+
 
 if __name__ == "__main__":
     MapaWindow()

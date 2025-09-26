@@ -1,9 +1,12 @@
+
 import requests
 import arcade
 import random
 from datetime import datetime
 from Pedido import Pedido
-from Repartidor import Repartidor 
+from Repartidor import Repartidor
+from Clima import Clima
+from MarkovClima import MarkovClima
 
 CELL_SIZE = 50
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
@@ -19,7 +22,80 @@ mapa = tiles
 ROWS = len(mapa)
 COLS = len(mapa[0])
 
+
+# --- Clima y Markov ---
+weather_data = requests.get(f"{BASE_URL}/city/weather?city=TigerCity&mode=seed").json()
+weather_info = weather_data.get("data", {})
+initial_weather = weather_info.get("initial", {})
+
+conditions = weather_info.get("conditions", [])
+transition = weather_info.get("transition", {})
+
+# Normaliza nombres de condiciones
+cond_names = [c["condition"] if isinstance(c, dict) and "condition" in c else c for c in conditions]
+
+# Convierte el diccionario de transición a matriz cuadrada NxN
+matrizT = []
+for fila in cond_names:
+    fila_probs = []
+    trans_row = transition.get(fila, {})
+    for col in cond_names:
+        prob = trans_row.get(col, 0.0)
+        fila_probs.append(prob)
+    matrizT.append(fila_probs)
+
+markov = MarkovClima(cond_names, matrizT)
+
 class MapaWindow(arcade.Window):
+    def iniciar_transicion_clima(self, nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult):
+        self.transicion_clima = {
+            'activa': True,
+            't': 0.0,
+            'duracion': random.uniform(3, 5),
+            'inicio': {
+                'condicion': self.clima.condicion,
+                'intensidad': self.clima.intensidad,
+                'multiplicador': self.clima.multiplicadorVelocidad
+            },
+            'fin': {
+                'condicion': nueva_cond,
+                'intensidad': nueva_intensidad,
+                'multiplicador': nuevo_mult,
+                'duracion': nueva_duracion
+            }
+        }
+
+    def draw_clima_info(self):
+        # Texto del clima
+        texto = f"Clima: {self.clima.condicion}\n"
+        texto += f"Intensidad: {self.clima.intensidad:.2f}\n"
+        texto += f"Tiempo restante: {int(self.clima.tiempoRestante)}s"
+        ancho = 180
+        alto = 70
+        x = 0
+        y = 0
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.LIGHT_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.DARK_GRAY, 2)
+        arcade.draw_text(
+            texto,
+            x + 10, y + alto,
+            arcade.color.BLACK, 13,
+            anchor_x="left", anchor_y="top",
+            multiline=True,
+            width=ancho-20
+        )
+
+
+    def cambiar_clima(self):
+        nueva_cond = self.markov.calcularSiguiente(self.clima.condicion)
+        nueva_intensidad = self.markov.sortearIntensidad()
+        nueva_duracion = self.markov.sortearDuracion()
+        nuevo_mult = self.markov.obtenerMultiplicador(nueva_cond)
+        self.iniciar_transicion_clima(nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult)
+
+
+
+
     def __init__(self):
         self.active_direction = None
         self.window_width = 800
@@ -43,6 +119,18 @@ class MapaWindow(arcade.Window):
         self.tiempo_ultimo_popup = 0
         self.tiempo_global = 0  
         self.intervalo_popup = 30 
+
+        # Estado de transición de clima
+        self.transicion_clima = {'activa': False}
+
+
+        # --- Clima dinámico ---
+        condicion_inicial = initial_weather.get("condition", "clear")
+        intensidad_inicial = initial_weather.get("intensity", 1.0)
+        duracion_inicial = random.randint(45, 60)  # clima normal
+        multiplicador = markov.obtenerMultiplicador(condicion_inicial)
+        self.clima = Clima(condicion_inicial, intensidad_inicial, duracion_inicial, multiplicador)
+        self.markov = markov
 
         self.cargar_pedidos()
         while True:
@@ -142,6 +230,7 @@ class MapaWindow(arcade.Window):
             anchor_y="top"
         )
         self.draw_popup_pedido()
+        self.draw_clima_info()
 
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.UP, arcade.key.DOWN, arcade.key.LEFT, arcade.key.RIGHT):
@@ -241,11 +330,44 @@ class MapaWindow(arcade.Window):
     def on_update(self, delta_time):
         if self.total_time > 0:
             self.total_time -= delta_time
+        # --- Clima dinámico ---
+        if self.transicion_clima.get('activa', False):
+            t = self.transicion_clima['t'] + delta_time
+            dur = self.transicion_clima['duracion']
+            prog = min(t / dur, 1.0)
+            ini = self.transicion_clima['inicio']
+            fin = self.transicion_clima['fin']
+            # Interpolación lineal
+            intensidad = ini['intensidad'] + (fin['intensidad'] - ini['intensidad']) * prog
+            mult = ini['multiplicador'] + (fin['multiplicador'] - ini['multiplicador']) * prog
+            self.clima.condicion = fin['condicion'] if prog >= 1.0 else ini['condicion']
+            self.clima.intensidad = intensidad
+            self.clima.multiplicadorVelocidad = mult
+            if prog >= 1.0:
+                # Fin de transición: setea clima final completo
+                self.clima.reiniciar(fin['condicion'], fin['intensidad'], fin['duracion'], fin['multiplicador'])
+                self.transicion_clima['activa'] = False
+            else:
+                self.transicion_clima['t'] = t
+        else:
+            if self.clima.actualizar(delta_time):
+                self.cambiar_clima()
+
         if self.moving:
             dx = self.target_x - self.player_sprite.center_x
             dy = self.target_y - self.player_sprite.center_y
             dist = (dx ** 2 + dy ** 2) ** 0.5
-            if dist < self.move_speed:
+            # Ajusta la velocidad base por el multiplicador del clima y la intensidad
+            mult_base = self.clima.multiplicadorVelocidad
+            intensidad = self.clima.intensidad
+            if self.clima.condicion == "clear":
+                mult_final = mult_base
+            else:
+                # A mayor intensidad, más lento (hasta 50% extra)
+                mult_final = mult_base * (1 - intensidad * 0.5)
+                mult_final = max(mult_final, 0.1)
+            velocidad_actual = self.move_speed * mult_final
+            if dist < velocidad_actual:
                 self.player_sprite.center_x = self.target_x
                 self.player_sprite.center_y = self.target_y
                 self.player_sprite.row = self.target_row
@@ -253,12 +375,11 @@ class MapaWindow(arcade.Window):
                 self.moving = False
                 self.try_move()
             else:
-                self.player_sprite.center_x += self.move_speed * dx / dist
-                self.player_sprite.center_y += self.move_speed * dy / dist
+                self.player_sprite.center_x += velocidad_actual * dx / dist
+                self.player_sprite.center_y += velocidad_actual * dy / dist
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
         for pickup in pickups_hit:
             pedido_obj = self.pedidos_dict[pickup.pedido_id]
-            #
             print(f"Se recolectó el pedido {pickup.pedido_id}")
             self.player_sprite.pickup(pedido_obj, datetime.now())
             pickup.remove_from_sprite_lists()
@@ -268,20 +389,21 @@ class MapaWindow(arcade.Window):
             if not pedido_obj:
                 continue
             if self.player_sprite.inventario.buscar_pedido(pedido_obj.id):
-                #
                 print(f"Se entregó el pedido {dropoff.pedido_id}")
                 self.player_sprite.dropoff(pedido_obj.id, datetime.now())
                 dropoff.remove_from_sprite_lists()
             else:
-                #
                 print(f"No se puede entregar {dropoff.pedido_id}, no está en el inventario.")
 
         self.tiempo_global += delta_time
         if not self.mostrar_pedido and self.pedidos_pendientes:
-               if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:
-                   self.pedido_actual = self.pedidos_pendientes.pop(0)
-                   self.mostrar_pedido = True
-                   self.tiempo_ultimo_popup = self.tiempo_global
+            if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:
+                self.pedido_actual = self.pedidos_pendientes.pop(0)
+                self.mostrar_pedido = True
+                self.tiempo_ultimo_popup = self.tiempo_global
+
+
+        
 
 
 if __name__ == "__main__":

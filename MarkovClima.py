@@ -12,11 +12,16 @@ class MarkovClima:
     def calcularSiguiente(self, actual: str) -> str:
         """
         Dado el clima actual, elige el siguiente usando la matriz de transición.
+        Si la condición no existe, usa la primera condición como fallback.
         """
-        idx = self.condiciones.index(actual)
+        try:
+            idx = self.condiciones.index(actual)
+        except ValueError:
+            idx = 0
         probs = self.matriz[idx]
-
-        # sorteo ponderado según probabilidades
+        if not any(probs):
+            # Si la fila está vacía, fallback a la primera condición
+            return self.condiciones[0]
         siguiente = random.choices(self.condiciones, weights=probs, k=1)[0]
         return siguiente
     
@@ -28,7 +33,7 @@ class MarkovClima:
 
     def sortearDuracion(self) -> int:
         """
-        Devuelve la duración de la ráfaga en segundos.
+        Devuelve la duración de la ráfaga en segundos (normal: 45-60s).
         """
         return random.randint(45, 60)
     

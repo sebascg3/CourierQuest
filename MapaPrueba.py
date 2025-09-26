@@ -100,10 +100,12 @@ class MapaWindow(arcade.Window):
         self.active_direction = None
         self.window_width = 800
         self.window_height = 600
+        self.hud_height = 100
         super().__init__(self.window_width, self.window_height, "Mapa con Repartidor")
         arcade.set_background_color(arcade.color.WHITE)
+        map_height = height * CELL_SIZE
         self.scale_x = self.window_width / (width * CELL_SIZE) if width > 0 else 1
-        self.scale_y = self.window_height / (height * CELL_SIZE) if height > 0 else 1
+        self.scale_y = (self.window_height - self.hud_height) / map_height if height > 0 else 1
         self.player_list = arcade.SpriteList()
         self.player_sprite = Repartidor("assets/repartidor.png", scale=0.8)
         self.total_time = 15 * 60
@@ -150,40 +152,110 @@ class MapaWindow(arcade.Window):
         self.move_speed = 10
         self.player_list.append(self.player_sprite)
 
+    def posicionar_repartidor_inicial(self):
+        """Posiciona el repartidor inicial ajustando por HUD height."""
+        while True:
+            start_row = random.randint(0, ROWS - 1)
+            start_col = random.randint(0, COLS - 1)
+            if mapa[start_row][start_col] != "B": 
+                self.player_sprite.row = start_row
+                self.player_sprite.col = start_col
+                self.player_sprite.center_x = (start_col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
+                self.player_sprite.center_y = ((ROWS * CELL_SIZE - (start_row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y) - self.hud_height
+                break
+    
+    def celda_a_pixeles(self, row, col):
+        """Convierte coordenadas de celda a píxeles, ajustando por HUD height."""
+        x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
+        y = ((ROWS * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y) - self.hud_height
+        return x, y
 
+    def draw_hud(self):
+        """Dibuja el HUD completo en la parte superior (100px de altura, fondo verde)."""
+        hud_y = self.window_height - self.hud_height
+        # Fondo y borde del HUD
+        arcade.draw_lbwh_rectangle_filled(
+            0, hud_y, self.window_width, self.hud_height,
+            arcade.color.WHITE_SMOKE # Fondo Harvard Crimson
+        )
+        arcade.draw_lbwh_rectangle_outline(
+            0, hud_y, self.window_width, self.hud_height,
+            arcade.color.BLACK, 3  # Borde grueso negro
+        )
+        
+        # Preparar textos organizados
+        pedidos = []
+        nodo = self.player_sprite.inventario.inicio
+        while nodo:
+            pedidos.append(str(nodo.pedido.id))
+            nodo = nodo.siguiente
+        pedidos_text = f"Pedidos: {', '.join(pedidos) if pedidos else 'Ninguno'}"
+        peso_text = f"Peso: {self.player_sprite.peso_total:.1f}/{self.player_sprite.inventario.peso_maximo}"
+        ingresos_text = f"Ingresos: ${self.player_sprite.ingresos:.2f}"
+        reputacion_text = f"Reputación: {self.player_sprite.reputacion}"
+        clima_text = f"Clima: {self.clima.condicion}\nIntensidad: {self.clima.intensidad:.2f}\nTiempo restante: {int(self.clima.tiempoRestante)}s"
+        
+        # Posiciones en el HUD (izquierda para stats del jugador, derecha para timer y clima)
+        hud_font_size = 12
+        hud_padding = 10
+        
+        # Stats del jugador (izquierda)
+        stats_y = hud_y + self.hud_height - hud_padding
+        arcade.draw_text(pedidos_text, hud_padding, stats_y - 10, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        arcade.draw_text(peso_text, hud_padding, stats_y - 25, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        arcade.draw_text(ingresos_text, hud_padding, stats_y - 40, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        arcade.draw_text(reputacion_text, hud_padding, stats_y - 55, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        
+        # Timer (derecha superior)
+        minutes = int(self.total_time) // 60
+        seconds = int(self.total_time) % 60
+        timer_text = f"Tiempo: {minutes:02d}:{seconds:02d}"
+        timer_x = self.window_width - hud_padding - 80  # Ajuste para ancho del texto
+        arcade.draw_text(timer_text, timer_x, stats_y, arcade.color.RED, hud_font_size + 8, anchor_x="center", anchor_y="top")
+        
+        # Clima (derecha inferior, multiline)
+        clima_x = self.window_width - hud_padding - 150  # Ancho aproximado para multiline
+        arcade.draw_text(
+            clima_text,
+            clima_x, hud_y + hud_padding,
+            arcade.color.BLACK, hud_font_size,
+            anchor_x="center", anchor_y="bottom",
+            multiline=True, width=140
+        )
 
     def draw_popup_pedido(self):
-     if self.mostrar_pedido and self.pedido_actual:
-        ancho, alto = 400, 150
-        x = self.window_width // 2 - ancho // 2
-        y = self.window_height // 2 - alto // 2
-
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.BLACK)
-        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.BLACK, 2)
-
-        arcade.draw_text(#cambiar esto para que no quede pegado
-            f"Nuevo pedido: {self.pedido_actual.id}\n"
-            f"Peso: {self.pedido_actual.peso}\n"
-            f"Pago: ${self.pedido_actual.pago}",
-            x + 20, y + alto - 20,
-            arcade.color.WHITE, 14,
-            anchor_x="left", anchor_y="top"
-        )
-        arcade.draw_text(
-            "[A]ceptar   [R]echazar",
-            x + 120, y + 55,
-            arcade.color.WHITE, 14
-        )
+        """Dibuja el popup centrado en el área del mapa (evita superposición con HUD)."""
+        if self.mostrar_pedido and self.pedido_actual:
+            ancho, alto = 400, 150
+            # Centrar en el área del mapa (restar hud_height para evitar HUD)
+            x = self.window_width // 2 - ancho // 2
+            y = (self.window_height - self.hud_height) // 2 - alto // 2
+            arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.BLACK)
+            arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 2)
+            info_text = f"Nuevo pedido: {self.pedido_actual.id}\nPeso: {self.pedido_actual.peso}\nPago: ${self.pedido_actual.pago}"
+            arcade.draw_text(
+                info_text,
+                x + 20, y + alto - 20,
+                arcade.color.WHITE, 14,
+                anchor_x="left", anchor_y="top",
+                multiline=True, width=ancho - 40
+            )
+            arcade.draw_text(
+                "[A]ceptar   [R]echazar",
+                x + 120, y + 55,
+                arcade.color.WHITE, 14
+            )
 
 
 
 
     def on_draw(self):
         self.clear()
+        self.draw_hud()
         for row in range(ROWS):
             for col in range(COLS):
                 x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
-                y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
+                y = ((height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y)
                 tipo = mapa[row][col]
                 rect = arcade.Rect.from_kwargs(x=x, y=y, width=CELL_SIZE * self.scale_x, height=CELL_SIZE * self.scale_y)
                 if tipo == "P":
@@ -197,40 +269,9 @@ class MapaWindow(arcade.Window):
         self.player_list.draw()
         self.pickup_list.draw()
         self.dropoff_list.draw()
-        texto = ""
-        pedidos = []
-        nodo = self.player_sprite.inventario.inicio
-        while nodo:
-            pedidos.append(nodo.pedido.id)
-            nodo = nodo.siguiente
-        texto = f"Pedidos: {', '.join(pedidos) if pedidos else 'Ninguno'}\n"
-        texto += f"Peso: {self.player_sprite.peso_total:.1f}/{self.player_sprite.inventario.peso_maximo}\n"
-        texto += f"Ingresos: ${self.player_sprite.ingresos:.2f}\n"
-        texto += f"Reputación: {self.player_sprite.reputacion}"
-        arcade.draw_text(
-            texto,
-            x=10, 
-            y=self.window_height - 10, 
-            color=arcade.color.BLACK,
-            font_size=12,
-            anchor_y="top",
-            multiline=True,
-            width=200 
-        )
-        minutes = int(self.total_time) // 60
-        seconds = int(self.total_time) % 60
-        time_text = f"{minutes:02d}:{seconds:02d}"
-        arcade.draw_text(
-            time_text,
-            x=self.window_width - 10,
-            y=self.window_height - 10,
-            color=arcade.color.RED,
-            font_size=20,
-            anchor_x="right",
-            anchor_y="top"
-        )
+        
         self.draw_popup_pedido()
-        self.draw_clima_info()
+        #self.draw_clima_info()
 
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.UP, arcade.key.DOWN, arcade.key.LEFT, arcade.key.RIGHT):

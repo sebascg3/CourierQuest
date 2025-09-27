@@ -47,6 +47,64 @@ for fila in cond_names:
 markov = MarkovClima(cond_names, matrizT)
 
 class MapaWindow(arcade.Window):
+    def cargar_y_mostrar_puntajes(self):
+        import os, json
+        ruta = os.path.join('data', 'puntajes.json')
+        if os.path.exists(ruta):
+            with open(ruta, 'r', encoding='utf-8') as f:
+                try:
+                    puntajes = json.load(f)
+                except Exception:
+                    puntajes = []
+        else:
+            puntajes = []
+        # Ordena de mayor a menor
+        puntajes.sort(key=lambda p: p['score'], reverse=True)
+        self.popup_puntajes = puntajes
+        self.mostrar_popup_puntajes = True
+
+    def draw_popup_puntajes(self):
+        ancho, alto = 400, 350
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_GREEN)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        arcade.draw_text("Marcadores", x + 20, y + alto - 30, arcade.color.WHITE, 20, anchor_x="left", anchor_y="top")
+        if hasattr(self, 'popup_puntajes') and self.popup_puntajes:
+            for i, p in enumerate(self.popup_puntajes[:10]):
+                nombre = p['nombre']
+                score = p['score']
+                arcade.draw_text(f"{i+1}. {nombre}: {score}", x + 30, y + alto - 60 - i*28, arcade.color.YELLOW, 16, anchor_x="left", anchor_y="top")
+        else:
+            arcade.draw_text("No hay puntajes guardados.", x + 30, y + alto - 60, arcade.color.LIGHT_GRAY, 16, anchor_x="left", anchor_y="top")
+        arcade.draw_text("Presiona ESC para cerrar", x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+    def pedir_nombre_popup(self):
+        self.nombre_popup_activo = True
+        self.nombre_jugador = ""
+
+    def draw_nombre_popup(self):
+        ancho, alto = 350, 120
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_BLUE)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        arcade.draw_text("Ingresa tu nombre de jugador:", x + 20, y + alto - 30, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top")
+        arcade.draw_text(self.nombre_jugador + "_", x + 20, y + alto - 65, arcade.color.WHITE, 16, anchor_x="left", anchor_y="top")
+        arcade.draw_text("Presiona Enter para continuar y suerte!", x + 20, y + 15, arcade.color.LIGHT_GRAY, 12)
+
+    def guardar_puntaje_si_termina(self):
+        """
+        Guarda el puntaje final usando Marcador cuando el tiempo llega a cero.
+        """
+        if not hasattr(self, 'marcador'):
+            from Marcador import Marcador
+            self.marcador = Marcador()
+        nombre = getattr(self.player_sprite, 'nombre', 'Jugador')
+        ingresos = getattr(self.player_sprite, 'ingresos', 0)
+        reputacion = getattr(self.player_sprite, 'reputacion', 1)
+        puntaje = self.marcador.guardar_puntaje_final(nombre, ingresos, reputacion)
+        print(f"Puntaje guardado: {puntaje}")
+        
     def iniciar_transicion_clima(self, nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult):
         self.transicion_clima = {
             'activa': True,
@@ -97,11 +155,14 @@ class MapaWindow(arcade.Window):
 
 
     def __init__(self):
+        self.nombre_popup_activo = False
+        self.nombre_jugador = ""
         self.active_direction = None
         self.window_width = 800
         self.window_height = 600
         self.hud_height = 100
         super().__init__(self.window_width, self.window_height, "Mapa con Repartidor")
+        self.pedir_nombre_popup()
         arcade.set_background_color(arcade.color.WHITE)
         map_height = height * CELL_SIZE
         self.scale_x = self.window_width / (width * CELL_SIZE) if width > 0 else 1
@@ -124,7 +185,6 @@ class MapaWindow(arcade.Window):
 
         # Estado de transición de clima
         self.transicion_clima = {'activa': False}
-
 
         # --- Clima dinámico ---
         condicion_inicial = initial_weather.get("condition", "clear")
@@ -205,6 +265,14 @@ class MapaWindow(arcade.Window):
         arcade.draw_text(peso_text, hud_padding, stats_y - 25, arcade.color.BLACK, hud_font_size, anchor_y="top")
         arcade.draw_text(ingresos_text, hud_padding, stats_y - 40, arcade.color.BLACK, hud_font_size, anchor_y="top")
         arcade.draw_text(reputacion_text, hud_padding, stats_y - 55, arcade.color.BLACK, hud_font_size, anchor_y="top")
+
+        # Texto centrado arriba: '[P]' para ver puntuaciones
+        arcade.draw_text(
+            "[P] para ver puntuaciones!",
+            self.window_width // 2, hud_y + self.hud_height - hud_padding - 10,
+            arcade.color.DARK_BLUE, hud_font_size + 2,
+            anchor_x="center", anchor_y="top"
+        )
         
         # Timer (derecha superior)
         minutes = int(self.total_time) // 60
@@ -214,10 +282,11 @@ class MapaWindow(arcade.Window):
         arcade.draw_text(timer_text, timer_x, stats_y, arcade.color.RED, hud_font_size + 8, anchor_x="center", anchor_y="top")
         
         # Clima (derecha inferior, multiline)
-        clima_x = self.window_width - hud_padding - 150  # Ancho aproximado para multiline
+        clima_x = self.window_width - hud_padding - 80
+        clima_y = hud_y + hud_padding - 10  # Baja levemente el texto
         arcade.draw_text(
             clima_text,
-            clima_x, hud_y + hud_padding,
+            clima_x, clima_y,
             arcade.color.BLACK, hud_font_size,
             anchor_x="center", anchor_y="bottom",
             multiline=True, width=140
@@ -251,6 +320,12 @@ class MapaWindow(arcade.Window):
 
     def on_draw(self):
         self.clear()
+        if getattr(self, 'mostrar_popup_puntajes', False):
+            self.draw_popup_puntajes()
+            return
+        if self.nombre_popup_activo:
+            self.draw_nombre_popup()
+            return
         self.draw_hud()
         for row in range(ROWS):
             for col in range(COLS):
@@ -269,36 +344,51 @@ class MapaWindow(arcade.Window):
         self.player_list.draw()
         self.pickup_list.draw()
         self.dropoff_list.draw()
-        
         self.draw_popup_pedido()
         #self.draw_clima_info()
 
     def on_key_press(self, key, modifiers):
+        if getattr(self, 'mostrar_popup_puntajes', False):
+            # No hacer nada mientras el popup está abierto
+            return
+        if self.nombre_popup_activo:
+            if key == arcade.key.ENTER:
+                self.nombre_popup_activo = False
+                self.player_sprite.nombre = self.nombre_jugador if self.nombre_jugador else "Jugador"
+            elif key == arcade.key.BACKSPACE:
+                self.nombre_jugador = self.nombre_jugador[:-1]
+            # Solo letras, números y espacio
+            elif 32 <= key <= 126 and len(self.nombre_jugador) < 16:
+                self.nombre_jugador += chr(key)
+            return
+        if key == arcade.key.P:
+            self.cargar_y_mostrar_puntajes()
+            return
         if key in (arcade.key.UP, arcade.key.DOWN, arcade.key.LEFT, arcade.key.RIGHT):
             self.active_direction = key
         self.try_move()
-
     def on_key_release(self, key, modifiers):
-       if self.mostrar_pedido and self.pedido_actual:
-           if key == arcade.key.A: 
-               pedido = self.pedido_actual
-               #Para saber cuando acepta
-               print(f"Pedido {pedido.id} aceptado")
-               self.pedidos_activos[pedido.id] = pedido 
-               pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
-               dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
-               self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
-
-               self.mostrar_pedido = False
-               self.pedido_actual = None
-
-           elif key == arcade.key.R:  
-                #Parafijarnos los que rechaza
+        # Cierra popup de puntajes con ESC
+        if getattr(self, 'mostrar_popup_puntajes', False):
+            if key == arcade.key.ESCAPE:
+                self.mostrar_popup_puntajes = False
+            return
+        # Popup pedido
+        if self.mostrar_pedido and self.pedido_actual:
+            if key == arcade.key.A: 
+                pedido = self.pedido_actual
+                print(f"Pedido {pedido.id} aceptado")
+                self.pedidos_activos[pedido.id] = pedido 
+                pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
+                dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
+                self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
+                self.mostrar_pedido = False
+                self.pedido_actual = None
+            elif key == arcade.key.R:  
                 print(f"Pedido {self.pedido_actual.id} rechazado")
                 self.mostrar_pedido = False
                 self.pedido_actual = None
-
-       if self.active_direction == key:
+        if self.active_direction == key:
             self.active_direction = None
 
     def try_move(self):
@@ -371,6 +461,8 @@ class MapaWindow(arcade.Window):
     def on_update(self, delta_time):
         if self.total_time > 0:
             self.total_time -= delta_time
+            if self.total_time <= 0:
+                self.guardar_puntaje_si_termina()
         # --- Clima dinámico ---
         if self.transicion_clima.get('activa', False):
             t = self.transicion_clima['t'] + delta_time

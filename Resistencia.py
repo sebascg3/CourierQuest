@@ -1,49 +1,64 @@
 class Resistencia:
-    def __init__(self, max_resistencia=100.0):
-        self.max_resistencia = max_resistencia
-        self.resistencia_actual = max_resistencia
-        self.exhausto = False  # True si <=0, bloquea movimiento hasta >=30
+    def __init__(self):
+        self.resistencia_actual = 100.0
+        self.recuperacion_por_segundo_normal = 2.0  # Recuperación pasiva cuando no se mueve y no agotado
+        self.recuperacion_por_segundo_agotado = 0.5  # Recuperación muy lenta cuando agotado (hasta 30%)
+        self.recuperacion_minima_para_mover = 30.0  # Umbral para salir del agotamiento (no bloquea movimiento antes de 0)
+        self.agotado = False
 
     def actualizar(self, delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima):
-        if self.exhausto:
-            # Recuperación cuando exhausted (lenta hasta 30%)
-            recuperacion = 10 * delta_time  # 10 puntos por segundo cuando no se mueve
-            self.resistencia_actual = min(self.resistencia_actual + recuperacion, self.max_resistencia)
-            if self.resistencia_actual >= 30:
-                self.exhausto = False
-            return self.resistencia_actual
+        # Si está agotado, forzar descanso: no gastar, solo recuperar lento hasta 30%
+        if self.agotado:
+            recuperacion = self.recuperacion_por_segundo_agotado * delta_time
+            self.resistencia_actual += recuperacion
+            self.resistencia_actual = min(self.resistencia_actual, 100.0)
+            # Verificar si ya recuperó lo suficiente para desagotarse (solo al 30%)
+            if self.resistencia_actual >= self.recuperacion_minima_para_mover:
+                self.agotado = False
+            return  # No hace nada más si agotado (no gasta, no mueve)
 
-        if not esta_moviendo:
-            # Recuperación pasiva normal (lenta)
-            recuperacion = 3 * delta_time  # 3 puntos por segundo cuando parado
-            self.resistencia_actual = min(self.resistencia_actual + recuperacion, self.max_resistencia)
-            return self.resistencia_actual
+        # Si no está agotado, proceder normal (se mueve libremente hasta llegar a 0)
+        if esta_moviendo:
+            # Gasto base por movimiento
+            gasto_base = 0.5 * delta_time
+            # Aumenta con peso (más peso, más gasto)
+            gasto_peso = 0.2 * (peso_total / 10.0) * delta_time  # Asume peso max ~10 para escalar
+            # Aumenta con clima adverso
+            gasto_clima = 0.0
+            if condicion_clima == "lluvia":
+                gasto_clima = 0.3 * intensidad_clima * delta_time
+            elif condicion_clima == "viento":
+                gasto_clima = 0.4 * intensidad_clima * delta_time
+            elif condicion_clima == "tormenta":
+                gasto_clima = 0.6 * intensidad_clima * delta_time
+            elif condicion_clima == "calor":
+                gasto_clima = 0.2 * intensidad_clima * delta_time
+            # Gasto total
+            gasto_total = gasto_base + gasto_peso + gasto_clima
+            self.resistencia_actual -= gasto_total
+            self.resistencia_actual = max(self.resistencia_actual, 0.0)
+        else:
+            # Recuperación pasiva normal (lenta, solo cuando no se mueve)
+            recuperacion = self.recuperacion_por_segundo_normal * delta_time
+            self.resistencia_actual += recuperacion
+            self.resistencia_actual = min(self.resistencia_actual, 100.0)
 
-        # Drenaje solo si se mueve
-        drenaje_base = 2 * delta_time  # Base por movimiento
-        drenaje_peso = 0
-        if peso_total > 3:
-            drenaje_peso = (peso_total - 3) * 1 * delta_time  # Más peso = más drenaje
-
-        drenaje_clima = 0
-        if condicion_clima != "clear":
-            drenaje_clima = intensidad_clima * 2 * delta_time  # Clima adverso drena más
-
-        drenaje_total = drenaje_base + drenaje_peso + drenaje_clima
-        self.resistencia_actual = max(0, self.resistencia_actual - drenaje_total)
-
+        # Verificar si llegó exactamente a 0 y setear agotado
         if self.resistencia_actual <= 0:
-            self.exhausto = True
-
-        return self.resistencia_actual
+            self.resistencia_actual = 0.0
+            self.agotado = True
 
     def puede_moverse(self):
-        return not self.exhausto
+        # Solo bloquea si agotado (se mueve libremente hasta 0, y después de recuperar al 30%)
+        return not self.agotado
 
     def get_multiplicador_velocidad(self):
-        if self.exhausto:
+        if self.agotado:
             return 0.0
         elif self.resistencia_actual < 50:
-            return 0.8  # Cansado: 80% velocidad
+            return 0.8  # Cansado: 80% velocidad (pero sigue moviéndose)
         else:
             return 1.0  # Normal
+
+    def get_resistencia_actual(self):
+        return self.resistencia_actual

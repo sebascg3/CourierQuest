@@ -9,18 +9,14 @@ from Resistencia import Resistencia
 class Repartidor(arcade.Sprite):
     def __init__(self, *args, **kwargs): 
         super().__init__(*args, **kwargs)
-
-
         self.nombre = "Repartidor"
-        self.resistencia_obj = Resistencia(100.0)
         self.reputacion = 70
         self.ingresos = 0
         self.inventario = Inventario()
         self.coordenada = Coordenada.Coordenada(0, 0)
         self.peso_total = 0
         self.velocidad_base = 0
-
-        self.estadoFisico = "Normal"
+        self.resistencia_obj = Resistencia()
         self.estado = "Jugando"
         self.tiempo_actual = datetime.now()
 
@@ -69,28 +65,30 @@ class Repartidor(arcade.Sprite):
 
         return True
 
-    def actualizar_resistencia(self, delta_time, clima):
-        # Llama a la nueva clase para actualizar
-        self.resistencia_obj.actualizar(delta_time, self.moving if hasattr(self, 'moving') else False, self.peso_total, clima.condicion, clima.intensidad)
+    def actualizar_resistencia(self, delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima):
+        self.resistencia_obj.actualizar(delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima)
+    
+    def get_resistencia_actual(self):
+        return self.resistencia_obj.get_resistencia_actual()
+    
+    def puede_moverse(self):
+        return self.resistencia_obj.puede_moverse()
 
-    def descansar(self, segundos: float, en_punto_descanso=False):
-        recuperacion = 5 * segundos
-        if en_punto_descanso:
-            recuperacion = 10 * segundos
-        self.resistencia_obj.resistencia_actual = min(100, self.resistencia_obj.resistencia_actual + recuperacion)
+    #def descansar(self, segundos: float, en_punto_descanso=False):
+        #recuperacion = 5 * segundos
+        #if en_punto_descanso:
+            #recuperacion = 10 * segundos
+        #self.resistencia_obj.resistencia_actual = min(100, self.resistencia_obj.resistencia_actual + recuperacion)
 
     def calcular_velocidad(self, clima_mult: Clima, superficie: float):
         clima_mult_val = getattr(clima_mult, "obtenerMultiplicadorVelocidad", lambda: 1.0)()
         Mpeso = max(0.8, 1 - 0.03 * self.peso_total)
         Mrep = 1.03 if self.reputacion >= 90 else 1.0
-        Mres = self.resistencia_obj.get_multiplicador_velocidad()
+        Mres = self.resistencia_obj.get_multiplicador_velocidad() 
 
         return self.velocidad_base * clima_mult_val * Mpeso * Mrep * Mres * superficie
 
-    def get_resistencia_actual(self):
-        return self.resistencia_obj.resistencia_actual
-    def puede_moverse(self):
-        return self.resistencia_obj.puede_moverse()
+
     def mover(self, coord: Coordenada):
         if not self.puede_moverse():
             return  # No mueve si exhausted

@@ -7,7 +7,7 @@ from Pedido import Pedido
 from Repartidor import Repartidor
 from Clima import Clima
 from MarkovClima import MarkovClima
-
+from Resistencia import Resistencia  
 
 CELL_SIZE = 50
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
@@ -149,6 +149,8 @@ class MapaWindow(arcade.Window):
         self.scale_y = (self.window_height - self.hud_height) / map_height if height > 0 else 1
         self.player_list = arcade.SpriteList()
         self.player_sprite = Repartidor("assets/repartidor.png", scale=0.8)
+        #inicializa resistencia
+        self.player_sprite.resistencia_obj = Resistencia()
         self.total_time = 15 * 60
         self.tex_parque = arcade.load_texture("assets/Parque.png")
         self.tex_edificio = arcade.load_texture("assets/Edificio.png")
@@ -233,6 +235,27 @@ class MapaWindow(arcade.Window):
         arcade.draw_text(peso_text, hud_padding, stats_y - 25, arcade.color.BLACK, hud_font_size, anchor_y="top")
         arcade.draw_text(ingresos_text, hud_padding, stats_y - 40, arcade.color.BLACK, hud_font_size, anchor_y="top")
         arcade.draw_text(reputacion_text, hud_padding, stats_y - 55, arcade.color.BLACK, hud_font_size, anchor_y="top")
+
+        # Resistencia
+        arcade.draw_text(reputacion_text, hud_padding, stats_y - 55, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        # Nueva: Texto de resistencia debajo de reputación
+        resistencia_actual = self.player_sprite.get_resistencia_actual()
+        resistencia_text = f"Resistencia:        {int(resistencia_actual)}  /100"
+        arcade.draw_text(resistencia_text, hud_padding, stats_y - 70, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        # Barra visual de resistencia (fondo gris, relleno verde, ancho 100, alto 10)
+        bar_x = hud_padding
+        bar_y = stats_y - 85
+        bar_width = 100
+        bar_height = 10
+        # Fondo de la barra
+        arcade.draw_lbwh_rectangle_filled(bar_x, bar_y, bar_width, bar_height, arcade.color.GRAY)
+        # Relleno proporcional (verde si >30, amarillo si 0-30, rojo si exhausted)
+        fill_color = arcade.color.GREEN if resistencia_actual > 30 else (arcade.color.YELLOW if resistencia_actual > 10 else arcade.color.RED)
+        fill_width = (resistencia_actual / 100.0) * bar_width
+        arcade.draw_lbwh_rectangle_filled(bar_x, bar_y, fill_width, bar_height, fill_color)
+        # Borde de la barra
+        arcade.draw_lbwh_rectangle_outline(bar_x, bar_y, bar_width, bar_height, arcade.color.BLACK, 1)
+
 
     # Texto centrado arriba: '[P]' para ver puntuaciones
         arcade.draw_text(
@@ -361,7 +384,9 @@ class MapaWindow(arcade.Window):
             self.active_direction = None
 
     def try_move(self):
-        if self.moving or self.active_direction is None:
+        if self.moving or self.active_direction is None or not self.player_sprite.puede_moverse():
+            if not self.player_sprite.puede_moverse():
+                print("¡Agotado! Recupera resistencia al 30% para moverte.")
             return
         new_row = self.player_sprite.row
         new_col = self.player_sprite.col
@@ -457,6 +482,17 @@ class MapaWindow(arcade.Window):
         else:
             if self.clima.actualizar(delta_time):
                 self.cambiar_clima()
+            self.player_sprite.actualizar_resistencia(delta_time, self.moving, self.player_sprite.peso_total, self.clima.condicion, self.clima.intensidad)
+
+        if not self.player_sprite.puede_moverse() and self.moving:
+            self.moving = False
+            self.player_sprite.center_x = self.target_x  # Detiene en la posición actual
+            self.player_sprite.center_y = self.target_y
+            self.player_sprite.row = self.target_row
+            self.player_sprite.col = self.target_col
+            print("¡Agotado! Descansando hasta recuperar 30% de resistencia.")
+
+
 
         if self.moving:
             dx = self.target_x - self.player_sprite.center_x

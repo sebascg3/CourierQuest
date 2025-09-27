@@ -8,6 +8,7 @@ from Repartidor import Repartidor
 from Clima import Clima
 from MarkovClima import MarkovClima
 
+
 CELL_SIZE = 50
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
 
@@ -123,27 +124,6 @@ class MapaWindow(arcade.Window):
             }
         }
 
-    def draw_clima_info(self):
-        # Texto del clima
-        texto = f"Clima: {self.clima.condicion}\n"
-        texto += f"Intensidad: {self.clima.intensidad:.2f}\n"
-        texto += f"Tiempo restante: {int(self.clima.tiempoRestante)}s"
-        ancho = 180
-        alto = 70
-        x = 0
-        y = 0
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.LIGHT_GRAY)
-        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.DARK_GRAY, 2)
-        arcade.draw_text(
-            texto,
-            x + 10, y + alto,
-            arcade.color.BLACK, 13,
-            anchor_x="left", anchor_y="top",
-            multiline=True,
-            width=ancho-20
-        )
-
-
     def cambiar_clima(self):
         nueva_cond = self.markov.calcularSiguiente(self.clima.condicion)
         nueva_intensidad = self.markov.sortearIntensidad()
@@ -212,23 +192,11 @@ class MapaWindow(arcade.Window):
         self.move_speed = 10
         self.player_list.append(self.player_sprite)
 
-    def posicionar_repartidor_inicial(self):
-        """Posiciona el repartidor inicial ajustando por HUD height."""
-        while True:
-            start_row = random.randint(0, ROWS - 1)
-            start_col = random.randint(0, COLS - 1)
-            if mapa[start_row][start_col] != "B": 
-                self.player_sprite.row = start_row
-                self.player_sprite.col = start_col
-                self.player_sprite.center_x = (start_col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
-                self.player_sprite.center_y = ((ROWS * CELL_SIZE - (start_row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y) - self.hud_height
-                break
-    
     def celda_a_pixeles(self, row, col):
-        """Convierte coordenadas de celda a píxeles, ajustando por HUD height."""
         x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
-        y = ((ROWS * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y) - self.hud_height
+        y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
         return x, y
+
 
     def draw_hud(self):
         """Dibuja el HUD completo en la parte superior (100px de altura, fondo verde)."""
@@ -236,13 +204,13 @@ class MapaWindow(arcade.Window):
         # Fondo y borde del HUD
         arcade.draw_lbwh_rectangle_filled(
             0, hud_y, self.window_width, self.hud_height,
-            arcade.color.WHITE_SMOKE # Fondo Harvard Crimson
+            arcade.color.WHITE_SMOKE  # Fondo Harvard Crimson
         )
         arcade.draw_lbwh_rectangle_outline(
             0, hud_y, self.window_width, self.hud_height,
             arcade.color.BLACK, 3  # Borde grueso negro
         )
-        
+    
         # Preparar textos organizados
         pedidos = []
         nodo = self.player_sprite.inventario.inicio
@@ -254,36 +222,36 @@ class MapaWindow(arcade.Window):
         ingresos_text = f"Ingresos: ${self.player_sprite.ingresos:.2f}"
         reputacion_text = f"Reputación: {self.player_sprite.reputacion}"
         clima_text = f"Clima: {self.clima.condicion}\nIntensidad: {self.clima.intensidad:.2f}\nTiempo restante: {int(self.clima.tiempoRestante)}s"
-        
-        # Posiciones en el HUD (izquierda para stats del jugador, derecha para timer y clima)
+    
+    # Posiciones en el HUD (izquierda para stats del jugador, derecha para timer y clima)
         hud_font_size = 12
         hud_padding = 10
-        
-        # Stats del jugador (izquierda)
+    
+    # Stats del jugador (izquierda)
         stats_y = hud_y + self.hud_height - hud_padding
         arcade.draw_text(pedidos_text, hud_padding, stats_y - 10, arcade.color.BLACK, hud_font_size, anchor_y="top")
         arcade.draw_text(peso_text, hud_padding, stats_y - 25, arcade.color.BLACK, hud_font_size, anchor_y="top")
         arcade.draw_text(ingresos_text, hud_padding, stats_y - 40, arcade.color.BLACK, hud_font_size, anchor_y="top")
         arcade.draw_text(reputacion_text, hud_padding, stats_y - 55, arcade.color.BLACK, hud_font_size, anchor_y="top")
 
-        # Texto centrado arriba: '[P]' para ver puntuaciones
+    # Texto centrado arriba: '[P]' para ver puntuaciones
         arcade.draw_text(
             "[P] para ver puntuaciones!",
             self.window_width // 2, hud_y + self.hud_height - hud_padding - 10,
             arcade.color.DARK_BLUE, hud_font_size + 2,
             anchor_x="center", anchor_y="top"
         )
-        
+    
         # Timer (derecha superior)
         minutes = int(self.total_time) // 60
         seconds = int(self.total_time) % 60
         timer_text = f"Tiempo: {minutes:02d}:{seconds:02d}"
         timer_x = self.window_width - hud_padding - 80  # Ajuste para ancho del texto
-        arcade.draw_text(timer_text, timer_x, stats_y, arcade.color.RED, hud_font_size + 8, anchor_x="center", anchor_y="top")
-        
-        # Clima (derecha inferior, multiline)
-        clima_x = self.window_width - hud_padding - 80
-        clima_y = hud_y + hud_padding - 10  # Baja levemente el texto
+        arcade.draw_text(timer_text, timer_x, stats_y, arcade.color.RED, hud_font_size + 5, anchor_x="center", anchor_y="top")
+    
+    # Clima (derecha inferior, multiline) - ajustado para no superponerse con timer
+        clima_x = self.window_width - hud_padding - 150  # Ancho aproximado para multiline
+        clima_y = hud_y + hud_padding
         arcade.draw_text(
             clima_text,
             clima_x, clima_y,
@@ -291,6 +259,7 @@ class MapaWindow(arcade.Window):
             anchor_x="center", anchor_y="bottom",
             multiline=True, width=140
         )
+
 
     def draw_popup_pedido(self):
         """Dibuja el popup centrado en el área del mapa (evita superposición con HUD)."""
@@ -345,7 +314,7 @@ class MapaWindow(arcade.Window):
         self.pickup_list.draw()
         self.dropoff_list.draw()
         self.draw_popup_pedido()
-        #self.draw_clima_info()
+
 
     def on_key_press(self, key, modifiers):
         if getattr(self, 'mostrar_popup_puntajes', False):
@@ -463,6 +432,9 @@ class MapaWindow(arcade.Window):
             self.total_time -= delta_time
             if self.total_time <= 0:
                 self.guardar_puntaje_si_termina()
+                self.total_time = 0
+                print("¡El tiempo se ha agotado! Fin del juego.")
+                self.close()
         # --- Clima dinámico ---
         if self.transicion_clima.get('activa', False):
             t = self.transicion_clima['t'] + delta_time

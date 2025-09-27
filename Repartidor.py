@@ -4,6 +4,7 @@ import Pedido
 from Inventario import Inventario
 import Clima
 import Coordenada
+from Resistencia import Resistencia
 
 class Repartidor(arcade.Sprite):
     def __init__(self, *args, **kwargs): 
@@ -11,7 +12,7 @@ class Repartidor(arcade.Sprite):
 
 
         self.nombre = "Repartidor"
-        self.resistencia = 100
+        self.resistencia_obj = Resistencia(100.0)
         self.reputacion = 70
         self.ingresos = 0
         self.inventario = Inventario()
@@ -68,41 +69,31 @@ class Repartidor(arcade.Sprite):
 
         return True
 
-    def actualizar_resistencia(self, clima: Clima):
-        gasto = 0.5
-        if self.peso_total > 3:
-            gasto += 0.2 * (self.peso_total - 3)
-
-        if getattr(clima, "tipo", None) in ("lluvia", "viento"):
-            gasto += 0.1
-        elif getattr(clima, "tipo", None) == "tormenta":
-            gasto += 0.3
-        elif getattr(clima, "tipo", None) == "calor":
-            gasto += 0.2
-
-        self.resistencia -= gasto
-        self.resistencia = max(self.resistencia, 0)
-
-        if self.resistencia <= 0:
-            self.estadoFisico = "Exhausto"
-        else:
-            self.estadoFisico = "Normal"
+    def actualizar_resistencia(self, delta_time, clima):
+        # Llama a la nueva clase para actualizar
+        self.resistencia_obj.actualizar(delta_time, self.moving if hasattr(self, 'moving') else False, self.peso_total, clima.condicion, clima.intensidad)
 
     def descansar(self, segundos: float, en_punto_descanso=False):
         recuperacion = 5 * segundos
         if en_punto_descanso:
             recuperacion = 10 * segundos
-        self.resistencia = min(100, self.resistencia + recuperacion)
+        self.resistencia_obj.resistencia_actual = min(100, self.resistencia_obj.resistencia_actual + recuperacion)
 
     def calcular_velocidad(self, clima_mult: Clima, superficie: float):
         clima_mult_val = getattr(clima_mult, "obtenerMultiplicadorVelocidad", lambda: 1.0)()
         Mpeso = max(0.8, 1 - 0.03 * self.peso_total)
         Mrep = 1.03 if self.reputacion >= 90 else 1.0
-        Mres = 1.0 if self.estadoFisico == "Normal" else (0.8 if self.estadoFisico == "Cansado" else 0.0)
+        Mres = self.resistencia_obj.get_multiplicador_velocidad()
 
         return self.velocidad_base * clima_mult_val * Mpeso * Mrep * Mres * superficie
 
+    def get_resistencia_actual(self):
+        return self.resistencia_obj.resistencia_actual
+    def puede_moverse(self):
+        return self.resistencia_obj.puede_moverse()
     def mover(self, coord: Coordenada):
+        if not self.puede_moverse():
+            return  # No mueve si exhausted
         self.coordenada.x += coord.x
         self.coordenada.y += coord.y
         self.center_x = self.coordenada.x * 30

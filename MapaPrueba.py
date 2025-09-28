@@ -309,13 +309,18 @@ class MapaWindow(arcade.Window):
 
 
     def __init__(self):
+        self.meta_ingresos = 1100 
+        self.meta_cumplida = False
+        self.mostrar_meta_popup = True
+
+
         self.nombre_popup_activo = False
         self.nombre_jugador = ""
         self.active_direction = None
         self.window_width = 800
         self.window_height = 600
         self.hud_height = 100
-        super().__init__(self.window_width, self.window_height, "Mapa con Repartidor")
+        super().__init__(self.window_width, self.window_height, "Courier Quest")
         self.pedir_nombre_popup()
         arcade.set_background_color(arcade.color.WHITE)
         # Estado popup cargar
@@ -484,7 +489,6 @@ class MapaWindow(arcade.Window):
         """Dibuja el popup centrado en el área del mapa (evita superposición con HUD)."""
         if self.mostrar_pedido and self.pedido_actual:
             ancho, alto = 400, 150
-            # Centrar en el área del mapa (restar hud_height para evitar HUD)
             x = self.window_width // 2 - ancho // 2
             y = (self.window_height - self.hud_height) // 2 - alto // 2
             arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.BLACK)
@@ -504,10 +508,40 @@ class MapaWindow(arcade.Window):
             )
 
 
+    def draw_popup_meta(self):
+        ancho, alto = 400, 200
+        x = self.width // 2 - ancho // 2
+        y = self.height // 2 - alto // 2
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_BLUE_GRAY)
+        arcade.draw_text(
+          "Meta de Ingresos del Juego",
+           x + ancho // 2, y + alto - 40,
+           arcade.color.WHITE, 18,
+           anchor_x="center", anchor_y="center"
+    )
+        arcade.draw_text(
+           f"Debes alcanzar ${self.meta_ingresos}\nantes de que se acabe el tiempo.",
+           x + ancho // 2, y + alto // 2,
+           arcade.color.WHITE, 14,
+           anchor_x="center", anchor_y="center",
+           align="center", multiline=True, width=ancho-40
+    )
+        arcade.draw_text(
+           "Presiona [Enter] para empezar",
+           x + ancho // 2, y + 30,
+           arcade.color.LIGHT_GREEN, 14,
+           anchor_x="center", anchor_y="center"
+    )
+
+
+
 
 
     def on_draw(self):
         self.clear()
+        if self.mostrar_meta_popup:
+            self.draw_popup_meta()
+            return 
         if getattr(self, 'mostrar_popup_puntajes', False):
             self.draw_popup_puntajes()
             return
@@ -542,7 +576,12 @@ class MapaWindow(arcade.Window):
         self.draw_popup_pedido()
 
 
+
     def on_key_press(self, key, modifiers):
+        
+        if self.mostrar_meta_popup and key==arcade.key.ENTER:
+            self.mostrar_meta_popup = False
+            return
         if getattr(self, 'mostrar_popup_puntajes', False):
             # No hacer nada mientras el popup está abierto
             return
@@ -732,6 +771,7 @@ class MapaWindow(arcade.Window):
             self.player_sprite.center_y = self.target_y
             self.player_sprite.row = self.target_row
             self.player_sprite.col = self.target_col
+            ###
             print("¡Agotado! Descansando hasta recuperar 30% de resistencia.")
 
 
@@ -777,13 +817,20 @@ class MapaWindow(arcade.Window):
                 dropoff.remove_from_sprite_lists()
             else:
                 print(f"No se puede entregar {dropoff.pedido_id}, no está en el inventario.")
-
+            if self.player_sprite.ingresos >= self.meta_ingresos:
+                self.meta_cumplida = True
         self.tiempo_global += delta_time
         if not self.mostrar_pedido and self.pedidos_pendientes:
             if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:
                 self.pedido_actual = self.pedidos_pendientes.pop(0)
                 self.mostrar_pedido = True
                 self.tiempo_ultimo_popup = self.tiempo_global
+
+
+###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
+       
+
+
 
 
         

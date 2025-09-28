@@ -1,4 +1,3 @@
-
 import requests
 import arcade
 import random
@@ -48,6 +47,40 @@ for fila in cond_names:
 markov = MarkovClima(cond_names, matrizT)
 
 class MapaWindow(arcade.Window):
+    # --- Popup de cargar partida ---
+    def mostrar_popup_cargar(self):
+        """Activa el popup para seleccionar slot de carga si no hay otros popups activos."""
+        if getattr(self, 'mostrar_popup_puntajes', False):
+            return
+        if getattr(self, 'nombre_popup_activo', False):
+            return
+        if getattr(self, 'popup_guardar_activo', False):
+            return
+        if getattr(self, 'popup_cargar_activo', False):
+            return
+        self.popup_cargar_activo = True
+        self.slot_cargar_seleccionado = None
+
+    def draw_popup_cargar(self):
+        if not getattr(self, 'popup_cargar_activo', False):
+            return
+        ancho, alto = 520, 140
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        texto = "¿Cuál espacio deseas cargar?\nSelecciona 1, 2 o 3"
+        arcade.draw_text(texto, x + 20, y + alto - 25, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top", multiline=True, width=ancho-40)
+        if self.slot_cargar_seleccionado is not None:
+            arcade.draw_text(f"Seleccionado: Slot {self.slot_cargar_seleccionado}", x + 20, y + 20, arcade.color.YELLOW, 14)
+        else:
+            arcade.draw_text("Presiona ESC para cancelar", x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+
+    def cargar_de_slot(self, slot:int):
+        """Placeholder de carga real. Aquí se implementaría la lógica de restaurar el estado."""
+        print(f"[DEBUG] Cargando partida de slot {slot} (placeholder)")
+        self.slot_cargar_seleccionado = slot
+        self.popup_cargar_activo = False
     def cargar_y_mostrar_puntajes(self):
         import os, json
         ruta = os.path.join('data', 'puntajes.json')
@@ -63,7 +96,148 @@ class MapaWindow(arcade.Window):
         puntajes.sort(key=lambda p: p['score'], reverse=True)
         self.popup_puntajes = puntajes
         self.mostrar_popup_puntajes = True
+    
+    # --- Popup de guardar partida ---
+    def mostrar_popup_guardar(self):
+        """Activa el popup para seleccionar slot de guardado si no hay otros popups activos."""
+        if getattr(self, 'mostrar_popup_puntajes', False):
+            return
+        if getattr(self, 'nombre_popup_activo', False):
+            return
+        # Evita abrir si ya está activo
+        if getattr(self, 'popup_guardar_activo', False):
+            return
+        self.popup_guardar_activo = True
+        self.slot_seleccionado = None
 
+    def draw_popup_guardar(self):
+        if not getattr(self, 'popup_guardar_activo', False):
+            return
+        ancho, alto = 520, 140
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        texto = "En cual slot deseas guardar la partida?\nSelecciona 1, 2 o 3"
+        arcade.draw_text(texto, x + 20, y + alto - 25, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top", multiline=True, width=ancho-40)
+        if self.slot_seleccionado is not None:
+            arcade.draw_text(f"Seleccionado: Slot {self.slot_seleccionado}", x + 20, y + 20, arcade.color.YELLOW, 14)
+        else:
+            arcade.draw_text("Presiona ESC para cancelar", x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+    
+    def guardar_en_slot(self, slot:int):
+        """Guarda el estado actual del juego en binario usando pickle."""
+        import pickle, os
+        ruta = os.path.join('saves', f'slot{slot}.bin')
+        estado = {
+            'total_time': self.total_time,
+            'player': {
+                'row': self.player_sprite.row,
+                'col': self.player_sprite.col,
+                'center_x': self.player_sprite.center_x,
+                'center_y': self.player_sprite.center_y,
+                'resistencia': self.player_sprite.get_resistencia_actual(),
+                'nombre': getattr(self.player_sprite, 'nombre', ''),
+                'ingresos': getattr(self.player_sprite, 'ingresos', 0),
+                'reputacion': getattr(self.player_sprite, 'reputacion', 1),
+                'peso_total': getattr(self.player_sprite, 'peso_total', 0),
+                # Inventario: lista de IDs de pedidos
+                'inventario': [nodo.pedido.id for nodo in self._iterar_inventario()],
+            },
+            'clima': {
+                'condicion': self.clima.condicion,
+                'intensidad': self.clima.intensidad,
+                'tiempoRestante': self.clima.tiempoRestante,
+                'multiplicadorVelocidad': self.clima.multiplicadorVelocidad,
+            },
+            'pedidos_activos': list(self.pedidos_activos.keys()),
+            'pedidos_pendientes': [p.id for p in self.pedidos_pendientes],
+            'pedido_actual': self.pedido_actual.id if self.pedido_actual else None,
+            # Guardar pickups y dropoffs
+            'pickups': [
+                {'pedido_id': s.pedido_id, 'center_x': s.center_x, 'center_y': s.center_y}
+                for s in self.pickup_list
+            ],
+            'dropoffs': [
+                {'pedido_id': s.pedido_id, 'center_x': s.center_x, 'center_y': s.center_y}
+                for s in self.dropoff_list
+            ],
+        }
+        with open(ruta, 'wb') as f:
+            pickle.dump(estado, f)
+        print(f"Guardado en {ruta}")
+        self.slot_seleccionado = slot
+        self.popup_guardar_activo = False
+
+    def _iterar_inventario(self):
+        """Itera sobre el inventario del jugador y retorna nodos."""
+        nodo = self.player_sprite.inventario.inicio
+        while nodo:
+            yield nodo
+            nodo = nodo.siguiente
+
+    def cargar_de_slot(self, slot:int):
+        """Carga el estado guardado en binario y restaura los atributos principales."""
+        import pickle, os
+        ruta = os.path.join('saves', f'slot{slot}.bin')
+        if not os.path.exists(ruta):
+            print(f"No existe guardado en {ruta}")
+            self.popup_cargar_activo = False
+            return
+        with open(ruta, 'rb') as f:
+            estado = pickle.load(f)
+        # Restaurar atributos principales
+        self.total_time = estado.get('total_time', self.total_time)
+        player = estado.get('player', {})
+        self.player_sprite.row = player.get('row', self.player_sprite.row)
+        self.player_sprite.col = player.get('col', self.player_sprite.col)
+        self.player_sprite.center_x = player.get('center_x', self.player_sprite.center_x)
+        self.player_sprite.center_y = player.get('center_y', self.player_sprite.center_y)
+        self.player_sprite.resistencia_obj.set_resistencia(player.get('resistencia', 100))
+        self.player_sprite.nombre = player.get('nombre', getattr(self.player_sprite, 'nombre', ''))
+        self.player_sprite.ingresos = player.get('ingresos', getattr(self.player_sprite, 'ingresos', 0))
+        self.player_sprite.reputacion = player.get('reputacion', getattr(self.player_sprite, 'reputacion', 1))
+        self.player_sprite.peso_total = player.get('peso_total', getattr(self.player_sprite, 'peso_total', 0))
+        # Inventario: reconstruir desde IDs
+        self._restaurar_inventario(player.get('inventario', []))
+        clima = estado.get('clima', {})
+        self.clima.condicion = clima.get('condicion', self.clima.condicion)
+        self.clima.intensidad = clima.get('intensidad', self.clima.intensidad)
+        self.clima.tiempoRestante = clima.get('tiempoRestante', self.clima.tiempoRestante)
+        self.clima.multiplicadorVelocidad = clima.get('multiplicadorVelocidad', self.clima.multiplicadorVelocidad)
+        # Pedidos activos/pendientes
+        self.pedidos_activos = {pid: self.pedidos_dict[pid] for pid in estado.get('pedidos_activos', []) if pid in self.pedidos_dict}
+        self.pedidos_pendientes = [self.pedidos_dict[pid] for pid in estado.get('pedidos_pendientes', []) if pid in self.pedidos_dict]
+        pid_actual = estado.get('pedido_actual', None)
+        self.pedido_actual = self.pedidos_dict[pid_actual] if pid_actual and pid_actual in self.pedidos_dict else None
+        # Restaurar pickups y dropoffs
+        self.pickup_list = arcade.SpriteList()
+        for info in estado.get('pickups', []):
+            s = arcade.Sprite("assets/pickup.png", scale=0.8)
+            s.center_x = info['center_x']
+            s.center_y = info['center_y']
+            s.pedido_id = info['pedido_id']
+            self.pickup_list.append(s)
+        self.dropoff_list = arcade.SpriteList()
+        for info in estado.get('dropoffs', []):
+            s = arcade.Sprite("assets/dropoff.png", scale=0.8)
+            s.center_x = info['center_x']
+            s.center_y = info['center_y']
+            s.pedido_id = info['pedido_id']
+            self.dropoff_list.append(s)
+        print(f"Cargado desde {ruta}")
+        self.slot_cargar_seleccionado = slot
+        self.popup_cargar_activo = False
+
+    def _restaurar_inventario(self, lista_ids):
+        """Reconstruye el inventario del jugador desde una lista de IDs."""
+        inv = self.player_sprite.inventario
+        inv.inicio = None
+        inv.peso_total = 0
+        for pid in lista_ids:
+            pedido = self.pedidos_dict.get(pid)
+            if pedido:
+                inv.agregar_pedido(pedido)
     def draw_popup_puntajes(self):
         ancho, alto = 400, 350
         x = self.window_width // 2 - ancho // 2
@@ -144,6 +318,12 @@ class MapaWindow(arcade.Window):
         super().__init__(self.window_width, self.window_height, "Mapa con Repartidor")
         self.pedir_nombre_popup()
         arcade.set_background_color(arcade.color.WHITE)
+        # Estado popup cargar
+        self.popup_cargar_activo = False
+        self.slot_cargar_seleccionado = None
+        # Estado popup guardar
+        self.popup_guardar_activo = False
+        self.slot_seleccionado = None 
         map_height = height * CELL_SIZE
         self.scale_x = self.window_width / (width * CELL_SIZE) if width > 0 else 1
         self.scale_y = (self.window_height - self.hud_height) / map_height if height > 0 else 1
@@ -258,10 +438,26 @@ class MapaWindow(arcade.Window):
 
 
     # Texto centrado arriba: '[P]' para ver puntuaciones
+        # Cartel de puntuaciones (centrado arriba)
+        cartel_y = hud_y + self.hud_height - hud_padding - 10
         arcade.draw_text(
             "[P] para ver puntuaciones!",
-            self.window_width // 2, hud_y + self.hud_height - hud_padding - 10,
+            self.window_width // 2, cartel_y,
             arcade.color.DARK_BLUE, hud_font_size + 2,
+            anchor_x="center", anchor_y="top"
+        )
+        # Cartel de guardar (debajo)
+        arcade.draw_text(
+            "[G] para guardar partida!",
+            self.window_width // 2, cartel_y - 22,
+            arcade.color.DARK_GREEN, hud_font_size + 2,
+            anchor_x="center", anchor_y="top"
+        )
+        # Cartel de cargar (debajo)
+        arcade.draw_text(
+            "[L] para cargar partida!",
+            self.window_width // 2, cartel_y - 44,
+            arcade.color.DARK_ORANGE, hud_font_size + 2,
             anchor_x="center", anchor_y="top"
         )
     
@@ -273,7 +469,7 @@ class MapaWindow(arcade.Window):
         arcade.draw_text(timer_text, timer_x, stats_y, arcade.color.RED, hud_font_size + 5, anchor_x="center", anchor_y="top")
     
     # Clima (derecha inferior, multiline) - ajustado para no superponerse con timer
-        clima_x = self.window_width - hud_padding - 150  # Ancho aproximado para multiline
+        clima_x = self.window_width - hud_padding - 70  # Ancho aproximado para multiline
         clima_y = hud_y + hud_padding
         arcade.draw_text(
             clima_text,
@@ -315,6 +511,13 @@ class MapaWindow(arcade.Window):
         if getattr(self, 'mostrar_popup_puntajes', False):
             self.draw_popup_puntajes()
             return
+        if getattr(self, 'popup_cargar_activo', False):
+            self.draw_popup_cargar()
+            return
+        if getattr(self, 'popup_guardar_activo', False):
+            # Dibuja detrás el mapa tenue? (Opcional: no lo implementamos ahora) Sólo popup.
+            self.draw_popup_guardar()
+            return
         if self.nombre_popup_activo:
             self.draw_nombre_popup()
             return
@@ -343,6 +546,39 @@ class MapaWindow(arcade.Window):
         if getattr(self, 'mostrar_popup_puntajes', False):
             # No hacer nada mientras el popup está abierto
             return
+        if getattr(self, 'popup_cargar_activo', False):
+            # Mientras está el popup de cargar, sólo aceptamos 1/2/3 o ESC
+            if key == arcade.key.ESCAPE:
+                self.popup_cargar_activo = False
+                return
+            if key in (arcade.key.KEY_1, arcade.key.KEY_2, arcade.key.KEY_3):
+                mapping = {
+                    arcade.key.KEY_1: 1,
+                    arcade.key.KEY_2: 2,
+                    arcade.key.KEY_3: 3
+                }
+                slot = mapping.get(key)
+                if slot:
+                    self.cargar_de_slot(slot)
+                return
+            return
+        if getattr(self, 'popup_guardar_activo', False):
+            # Mientras está el popup de guardar, sólo aceptamos 1/2/3 o ESC
+            if key == arcade.key.ESCAPE:
+                self.popup_guardar_activo = False
+                return
+            if key in (arcade.key.KEY_1, arcade.key.KEY_2, arcade.key.KEY_3):
+                # Arcade define KEY_1 etc. Convertimos a número
+                mapping = {
+                    arcade.key.KEY_1: 1,
+                    arcade.key.KEY_2: 2,
+                    arcade.key.KEY_3: 3
+                }
+                slot = mapping.get(key)
+                if slot:
+                    self.guardar_en_slot(slot)
+                return
+            return
         if self.nombre_popup_activo:
             if key == arcade.key.ENTER:
                 self.nombre_popup_activo = False
@@ -355,6 +591,12 @@ class MapaWindow(arcade.Window):
             return
         if key == arcade.key.P:
             self.cargar_y_mostrar_puntajes()
+            return
+        if key == arcade.key.L:
+            self.mostrar_popup_cargar()
+            return
+        if key == arcade.key.G:
+            self.mostrar_popup_guardar()
             return
         if key in (arcade.key.UP, arcade.key.DOWN, arcade.key.LEFT, arcade.key.RIGHT):
             self.active_direction = key

@@ -62,3 +62,7 @@ class Resistencia:
 
     def get_resistencia_actual(self):
         return self.resistencia_actual
+
+    def set_resistencia(self, valor):
+        self.resistencia_actual = float(valor)
+        self.agotado = self.resistencia_actual <= 0

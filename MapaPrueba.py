@@ -128,7 +128,7 @@ class MapaWindow(arcade.Window):
     def guardar_en_slot(self, slot:int):
         """Guarda el estado actual del juego en binario usando pickle."""
         import pickle, os
-        ruta = os.path.join('saves', f'slot{slot}.bin')
+        ruta = os.path.join('data', f'slot{slot}.bin')
         estado = {
             'total_time': self.total_time,
             'player': {
@@ -179,7 +179,7 @@ class MapaWindow(arcade.Window):
     def cargar_de_slot(self, slot:int):
         """Carga el estado guardado en binario y restaura los atributos principales."""
         import pickle, os
-        ruta = os.path.join('saves', f'slot{slot}.bin')
+        ruta = os.path.join('data', f'slot{slot}.bin')
         if not os.path.exists(ruta):
             print(f"No existe guardado en {ruta}")
             self.popup_cargar_activo = False

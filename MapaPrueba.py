@@ -376,7 +376,7 @@ class MapaWindow(arcade.Window):
         self.target_row = self.player_sprite.row
         self.target_col = self.player_sprite.col
         self.moving = False
-        self.move_speed = 10
+        self.move_speed = 150
         self.player_list.append(self.player_sprite)
 
     def celda_a_pixeles(self, row, col):
@@ -777,18 +777,26 @@ class MapaWindow(arcade.Window):
 
 
         if self.moving:
-            
             dx = self.target_x - self.player_sprite.center_x
             dy = self.target_y - self.player_sprite.center_y
             dist = (dx ** 2 + dy ** 2) ** 0.5
+
             
+            mult_clima = self.clima.multiplicadorVelocidad
+            if self.clima.condicion != "clear":
+                mult_clima *= (1 - self.clima.intensidad * 0.5)
+            mult_clima = max(mult_clima, 0.1)
+
             peso_total = self.player_sprite.peso_total
             peso_maximo = self.player_sprite.inventario.peso_maximo
-            speed_reduction_factor = 0.8
+            speed_reduction_factor = 0.8  
             reduction = (peso_total / peso_maximo) * speed_reduction_factor if peso_maximo > 0 else 0
-            mult_peso = 1.0 - reduction
-            velocidad_base = self.move_speed
-            velocidad_actual_por_frame = velocidad_base *  mult_peso * delta_time
+            mult_peso = max(1.0 - reduction, 0.2)
+
+            mult_resistencia = self.player_sprite.resistencia_obj.get_multiplicador_velocidad()
+
+            velocidad_base = self.move_speed  
+            velocidad_actual_por_frame = velocidad_base * mult_clima * mult_peso * mult_resistencia * delta_time
 
             if dist < velocidad_actual_por_frame:
                 self.player_sprite.center_x = self.target_x
@@ -801,26 +809,7 @@ class MapaWindow(arcade.Window):
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
 
-            # Ajusta la velocidad base por el multiplicador del clima y la intensidad
-            mult_base = self.clima.multiplicadorVelocidad
-            intensidad = self.clima.intensidad
-            if self.clima.condicion == "clear":
-                mult_final = mult_base
-            else:
-                # A mayor intensidad, más lento (hasta 50% extra)
-                mult_final = mult_base * (1 - intensidad * 0.5)
-                mult_final = max(mult_final, 0.1)
-            velocidad_actual = self.move_speed * mult_final
-            if dist < velocidad_actual:
-                self.player_sprite.center_x = self.target_x
-                self.player_sprite.center_y = self.target_y
-                self.player_sprite.row = self.target_row
-                self.player_sprite.col = self.target_col
-                self.moving = False
-                self.try_move()
-            else:
-                self.player_sprite.center_x += velocidad_actual * dx / dist
-                self.player_sprite.center_y += velocidad_actual * dy / dist
+
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
         for pickup in pickups_hit:
             pedido_obj = self.pedidos_dict[pickup.pedido_id]

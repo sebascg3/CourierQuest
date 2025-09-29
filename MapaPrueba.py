@@ -777,9 +777,30 @@ class MapaWindow(arcade.Window):
 
 
         if self.moving:
+            
             dx = self.target_x - self.player_sprite.center_x
             dy = self.target_y - self.player_sprite.center_y
             dist = (dx ** 2 + dy ** 2) ** 0.5
+            
+            peso_total = self.player_sprite.peso_total
+            peso_maximo = self.player_sprite.inventario.peso_maximo
+            speed_reduction_factor = 0.8
+            reduction = (peso_total / peso_maximo) * speed_reduction_factor if peso_maximo > 0 else 0
+            mult_peso = 1.0 - reduction
+            velocidad_base = self.move_speed
+            velocidad_actual_por_frame = velocidad_base *  mult_peso * delta_time
+
+            if dist < velocidad_actual_por_frame:
+                self.player_sprite.center_x = self.target_x
+                self.player_sprite.center_y = self.target_y
+                self.player_sprite.row = self.target_row
+                self.player_sprite.col = self.target_col
+                self.moving = False
+                self.try_move()
+            else:
+                self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
+                self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
+
             # Ajusta la velocidad base por el multiplicador del clima y la intensidad
             mult_base = self.clima.multiplicadorVelocidad
             intensidad = self.clima.intensidad

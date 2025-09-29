@@ -60,14 +60,24 @@ class Inventario:
 
     def cantidad(self):
         return self._cantidad
+    
+    def recorrer_adelante(self):
+        actual = self.inicio
+        while actual:
+            yield actual.pedido
+            actual = actual.siguiente
 
-
-
-    def acomodar_prioridad(self):######
+    def recorrer_atras(self):
+        actual = self.fin
+        while actual:
+            yield actual.pedido
+            actual = actual.anterior
+    
+    def acomodar_prioridad(self):
         pedidos = list(self.recorrer_adelante())
         return sorted(pedidos, key=lambda p: p.prioridad, reverse=True)
 
-    def acomodar_deadline(self):#####
+    def acomodar_deadline(self):
         pedidos = list(self.recorrer_adelante())
         return sorted(pedidos, key=lambda p: p.deadline)
 

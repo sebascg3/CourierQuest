@@ -20,47 +20,104 @@ class Repartidor(arcade.Sprite):
         self.estado = "Jugando"
         self.tiempo_actual = datetime.now()
 
+        #para reputación
+        self.reputacion = 70
+        self.tiempos_recogida = {}  # Diccionario para guardar cuándo se recogió cada pedido
+        self.racha_entregas_sin_penalizacion = 0
+        self.primera_tardanza_del_dia_usada = False
+        ####
+
     def aceptar_pedido(self, pedido: Pedido):
         self.inventario.agregar_pedido(pedido)
         self.peso_total += pedido.peso
 
     def pickup(self, pedido: Pedido, tiempo: datetime = None):
-       tiempo = tiempo or datetime.now() 
-       if self.inventario.agregar_pedido(pedido):
-         self.peso_total += pedido.peso
-         pedido.tiempo_recogido = tiempo
-         return True
-       return False
+        tiempo = tiempo or datetime.now() 
+        if self.inventario.agregar_pedido(pedido):
+            pedido.tiempo_recogido = tiempo
+            return True
+        return False
 
+    # En tu archivo Repartidor.py
 
     def dropoff(self, pedido_id: str, tiempo_entrega: datetime):
+        """
+        Procesa la entrega y devuelve una lista de mensajes de feedback
+        para mostrar en la pantalla.
+        """
         pedido = self.inventario.buscar_pedido(pedido_id)
         if not pedido:
-            return False
-        delta = (tiempo_entrega - pedido.deadline).total_seconds()
+            return [] # Devuelve una lista vacía si el pedido no se encuentra
 
-        if delta <= -0.2 * (pedido.deadline - self.tiempo_actual).total_seconds():
-            self.reputacion += 5
-        elif delta <= 0:
-            self.reputacion += 3
-        elif delta <= 30:
-            self.reputacion -= 2
-        elif delta <= 120:
-            self.reputacion -= 5
-        else:
-            self.reputacion -= 10
+        # ✅ Lista para guardar los mensajes que se mostrarán en pantalla
+        mensajes_feedback = []
+        verde = arcade.color.FOREST_GREEN
+        rojo = arcade.color.FIREBRICK
+        oro = arcade.color.GOLD
 
+        # --- LÓGICA DE REPUTACIÓN BASADA EN TIEMPO ---
+        delta_segundos = (tiempo_entrega - pedido.deadline).total_seconds()
+        
+        if delta_segundos > 0:  # ENTREGA TARDÍA
+            self.racha_entregas_sin_penalizacion = 0
+            
+            penalizacion = 0
+            if delta_segundos <= 30: penalizacion = -2
+            elif delta_segundos <= 120: penalizacion = -5
+            else: penalizacion = -10
+
+            if self.reputacion >= 85 and not self.primera_tardanza_del_dia_usada:
+                penalizacion /= 2
+                self.primera_tardanza_del_dia_usada = True
+                mensajes_feedback.append( ("1ra Tarde: Penalización Reducida", oro) )
+            
+            self.reputacion += penalizacion
+            mensajes_feedback.append( (f"Entrega Tardía: {int(penalizacion)} Rep.", rojo) )
+
+        else:  # ENTREGA A TIEMPO O TEMPRANA
+            tiempo_recogida = pedido.tiempo_recogido
+            ventana_total_entrega = (pedido.deadline - tiempo_recogida).total_seconds()
+            
+            bonificacion = 0
+            if ventana_total_entrega > 0 and abs(delta_segundos) / ventana_total_entrega >= 0.20:
+                bonificacion = 5
+                mensajes_feedback.append( (f"¡Entrega Temprana! +{bonificacion} Rep.", verde) )
+            else:
+                bonificacion = 3
+                mensajes_feedback.append( (f"Entrega a Tiempo: +{bonificacion} Rep.", verde) )
+            
+            self.reputacion += bonificacion
+            self.racha_entregas_sin_penalizacion += 1
+            
+            if self.racha_entregas_sin_penalizacion >= 3:
+                self.reputacion += 2
+                self.racha_entregas_sin_penalizacion = 0
+                mensajes_feedback.append( ("¡Racha de 3! +2 Rep. Extra", oro) )
+
+        # --- LÓGICA DE PAGO ---
         pago = pedido.pago
         if self.reputacion >= 90:
-            pago *= 1.05
+            bonus = pago * 0.05
+            pago += bonus
+            mensajes_feedback.append( (f"Bonus de Pago: +${bonus:.2f}", oro) )
         self.ingresos += pago
 
+        # --- LIMPIEZA Y ESTADO FINAL ---
+        self.inventario.quitar_pedido(pedido_id)
+        self.reputacion = min(self.reputacion, 100)
+        
         if self.reputacion < 20:
             self.estado = "Derrota"
+            mensajes_feedback.append( ("¡REPUTACIÓN MUY BAJA! - DERROTA", rojo) )
+        
+        # ✅ En lugar de devolver True, devuelve la lista de mensajes
+        return mensajes_feedback
+    
 
-        self.inventario.quitar_pedido(pedido_id)
 
-        return True
+
+
+
 
     def actualizar_resistencia(self, delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima):
         self.resistencia_obj.actualizar(delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima)

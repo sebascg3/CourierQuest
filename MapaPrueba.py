@@ -307,8 +307,6 @@ class MapaWindow(arcade.Window):
         self.iniciar_transicion_clima(nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult)
 
 
-
-
     def __init__(self):
         self.meta_ingresos = 1100 
         self.meta_cumplida = False
@@ -318,6 +316,7 @@ class MapaWindow(arcade.Window):
         self.pedido_activo_para_entrega = None
         self.lista_inventario_visible = [] 
         self.modo_orden = 'prioridad'
+        self.notificaciones = []
         self.nombre_popup_activo = False
         self.nombre_jugador = ""
         self.active_direction = None
@@ -577,7 +576,44 @@ class MapaWindow(arcade.Window):
            arcade.color.LIGHT_GREEN, 14,
            anchor_x="center", anchor_y="center"
     )
+        
+    def agregar_notificacion(self, texto, color=arcade.color.WHITE):
+        notificacion = {
+            "texto": texto,
+            "color": color,
+            "tiempo_vida": 4.0, 
+            "y_offset": 0
+        }
+        for n in self.notificaciones:
+            n["y_offset"] += 30
+            
+        self.notificaciones.insert(0, notificacion) 
 
+    def actualizar_notificaciones(self, delta_time):
+        for notificacion in self.notificaciones[:]:
+            notificacion["tiempo_vida"] -= delta_time
+            if notificacion["tiempo_vida"] <= 0:
+                self.notificaciones.remove(notificacion)
+    
+    def draw_notificaciones(self):
+        start_x = 20
+        start_y = self.window_height - self.hud_height - 40 
+
+        for notificacion in self.notificaciones:
+            duracion_total = 4.0 
+            porcentaje_vida = notificacion["tiempo_vida"] / duracion_total
+            alpha = int(255 * porcentaje_vida)
+            alpha = max(0, min(255, alpha))
+            color = (*notificacion["color"][:3], alpha)
+
+            arcade.draw_text(
+                notificacion["texto"],
+                start_x,
+                start_y - notificacion["y_offset"],
+                color,
+                font_size=16,
+                bold=True
+            )
 
     def on_draw(self):
         self.clear()
@@ -616,10 +652,10 @@ class MapaWindow(arcade.Window):
         self.pickup_list.draw()
         self.dropoff_list.draw()
         self.draw_popup_pedido()
+        self.draw_notificaciones()
         if self.mostrar_inventario_popup:
             self.draw_inventario_popup()
             return
-
 
 
     def on_key_press(self, key, modifiers):
@@ -700,11 +736,6 @@ class MapaWindow(arcade.Window):
             else:
                 self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
             return
-        #########
-
-
-
-
 
         if self.nombre_popup_activo:
             if key == arcade.key.ENTER:
@@ -824,6 +855,7 @@ class MapaWindow(arcade.Window):
             self.pedidos_pendientes.append(pedido_obj)
 
     def on_update(self, delta_time):
+        self.actualizar_notificaciones(delta_time)
         if self.total_time > 0:
             self.total_time -= delta_time
             if self.total_time <= 0:
@@ -902,18 +934,18 @@ class MapaWindow(arcade.Window):
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
         if pickups_hit:
             for pickup in pickups_hit:
-                pedido_obj = self.pedidos_dict[pickup.pedido_id]
-                if self.player_sprite.inventario.agregar_pedido(pedido_obj):
-                    ###
-                    print(f"Se recolectó el pedido {pedido_obj.id} y se guardó.")
+                 pedido_obj = self.pedidos_dict[pickup.pedido_id]
+                 if self.player_sprite.pickup(pedido_obj, datetime.now()):
                     pickup.remove_from_sprite_lists()
         else:
             dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
             for dropoff in dropoffs_hit:
                 if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
-                    ####
-                    print(f"Se entregó el pedido seleccionado: {self.pedido_activo_para_entrega.id}")
-                    self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, datetime.now())
+                    mensajes = self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, datetime.now())
+                    if mensajes:
+                        for texto, color in mensajes:
+                            self.agregar_notificacion(texto, color)
+                    
                     self.pedido_activo_para_entrega = None
                     dropoff.remove_from_sprite_lists()
 
@@ -929,12 +961,6 @@ class MapaWindow(arcade.Window):
 
 ###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
        
-
-
-
-
-        
-
 
 if __name__ == "__main__":
     MapaWindow()

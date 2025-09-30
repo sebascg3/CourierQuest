@@ -19,13 +19,10 @@ class Repartidor(arcade.Sprite):
         self.resistencia_obj = Resistencia()
         self.estado = "Jugando"
         self.tiempo_actual = datetime.now()
-
-        #para reputación
         self.reputacion = 70
-        self.tiempos_recogida = {}  # Diccionario para guardar cuándo se recogió cada pedido
+        self.tiempos_recogida = {}  
         self.racha_entregas_sin_penalizacion = 0
         self.primera_tardanza_del_dia_usada = False
-        ####
 
     def aceptar_pedido(self, pedido: Pedido):
         self.inventario.agregar_pedido(pedido)
@@ -38,27 +35,18 @@ class Repartidor(arcade.Sprite):
             return True
         return False
 
-    # En tu archivo Repartidor.py
-
     def dropoff(self, pedido_id: str, tiempo_entrega: datetime):
-        """
-        Procesa la entrega y devuelve una lista de mensajes de feedback
-        para mostrar en la pantalla.
-        """
         pedido = self.inventario.buscar_pedido(pedido_id)
         if not pedido:
-            return [] # Devuelve una lista vacía si el pedido no se encuentra
-
-        # ✅ Lista para guardar los mensajes que se mostrarán en pantalla
+            return [] 
         mensajes_feedback = []
         verde = arcade.color.FOREST_GREEN
         rojo = arcade.color.FIREBRICK
         oro = arcade.color.GOLD
 
-        # --- LÓGICA DE REPUTACIÓN BASADA EN TIEMPO ---
         delta_segundos = (tiempo_entrega - pedido.deadline).total_seconds()
         
-        if delta_segundos > 0:  # ENTREGA TARDÍA
+        if delta_segundos > 0: 
             self.racha_entregas_sin_penalizacion = 0
             
             penalizacion = 0
@@ -74,7 +62,7 @@ class Repartidor(arcade.Sprite):
             self.reputacion += penalizacion
             mensajes_feedback.append( (f"Entrega Tardía: {int(penalizacion)} Rep.", rojo) )
 
-        else:  # ENTREGA A TIEMPO O TEMPRANA
+        else: 
             tiempo_recogida = pedido.tiempo_recogido
             ventana_total_entrega = (pedido.deadline - tiempo_recogida).total_seconds()
             
@@ -93,16 +81,12 @@ class Repartidor(arcade.Sprite):
                 self.reputacion += 2
                 self.racha_entregas_sin_penalizacion = 0
                 mensajes_feedback.append( ("¡Racha de 3! +2 Rep. Extra", oro) )
-
-        # --- LÓGICA DE PAGO ---
         pago = pedido.pago
         if self.reputacion >= 90:
             bonus = pago * 0.05
             pago += bonus
             mensajes_feedback.append( (f"Bonus de Pago: +${bonus:.2f}", oro) )
         self.ingresos += pago
-
-        # --- LIMPIEZA Y ESTADO FINAL ---
         self.inventario.quitar_pedido(pedido_id)
         self.reputacion = min(self.reputacion, 100)
         
@@ -110,14 +94,7 @@ class Repartidor(arcade.Sprite):
             self.estado = "Derrota"
             mensajes_feedback.append( ("¡REPUTACIÓN MUY BAJA! - DERROTA", rojo) )
         
-        # ✅ En lugar de devolver True, devuelve la lista de mensajes
         return mensajes_feedback
-    
-
-
-
-
-
 
     def actualizar_resistencia(self, delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima):
         self.resistencia_obj.actualizar(delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima)

@@ -7,6 +7,7 @@ from Repartidor import Repartidor
 from Clima import Clima
 from MarkovClima import MarkovClima
 from Resistencia import Resistencia  
+from datetime import datetime
 
 CELL_SIZE = 50
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
@@ -312,8 +313,11 @@ class MapaWindow(arcade.Window):
         self.meta_ingresos = 1100 
         self.meta_cumplida = False
         self.mostrar_meta_popup = True
-
-
+        self.mostrar_inventario_popup = False
+        self.inventario_seleccion_idx = 0  
+        self.pedido_activo_para_entrega = None
+        self.lista_inventario_visible = [] 
+        self.modo_orden = 'prioridad'
         self.nombre_popup_activo = False
         self.nombre_jugador = ""
         self.active_direction = None
@@ -446,6 +450,12 @@ class MapaWindow(arcade.Window):
         # Cartel de puntuaciones (centrado arriba)
         cartel_y = hud_y + self.hud_height - hud_padding - 10
         arcade.draw_text(
+            "[I] para abrir inventario y seleccionar!",
+            self.window_width // 2, cartel_y-60,
+            arcade.color.DARK_PINK, hud_font_size + 2,
+            anchor_x="center", anchor_y="top"
+        )
+        arcade.draw_text(
             "[P] para ver puntuaciones!",
             self.window_width // 2, cartel_y,
             arcade.color.DARK_BLUE, hud_font_size + 2,
@@ -483,6 +493,41 @@ class MapaWindow(arcade.Window):
             anchor_x="center", anchor_y="bottom",
             multiline=True, width=140
         )
+
+    def draw_inventario_popup(self):
+        """Dibuja el menú de selección de pedidos a partir de una lista temporal."""
+        if not self.mostrar_inventario_popup:
+            return
+
+        ancho, alto = 500, 350
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+        
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        
+        titulo = f"Inventario de Pedidos (Orden: {self.modo_orden.capitalize()})"
+        arcade.draw_text(titulo, x + ancho / 2, y + alto - 30,
+                         arcade.color.WHITE, 20, anchor_x="center")
+        arcade.draw_text("[↑↓] Navegar  [ENTER] Seleccionar  [I] Cerrar", x + ancho / 2, y + alto - 60,
+                         arcade.color.LIGHT_GRAY, 12, anchor_x="center")
+        arcade.draw_text("[D] Ordenar por Deadline  [Z] Ordenar por Prioridad", x + ancho / 2, y + 20,
+                         arcade.color.CYAN, 12, anchor_x="center")
+
+        if not self.lista_inventario_visible:
+            arcade.draw_text("No tienes pedidos.", x + ancho/2, y + alto/2,
+                             arcade.color.GRAY, 16, anchor_x="center")
+            return
+
+        for i, pedido in enumerate(self.lista_inventario_visible):
+            deadline_str = pedido.deadline.strftime('%Y-%m-%d %H:%M')
+            linea_texto = f"ID: {pedido.id} | Prioridad: {pedido.prioridad} | Deadline: {deadline_str}"
+            color_texto = arcade.color.YELLOW if i == self.inventario_seleccion_idx else arcade.color.WHITE
+
+            if i == self.inventario_seleccion_idx:
+                arcade.draw_lbwh_rectangle_filled(x + 20, y + alto - 100 - i * 30 - 5, ancho - 40, 30, arcade.color.DARK_BLUE)
+            
+            arcade.draw_text(linea_texto, x + 30, y + alto - 100 - i * 30, color_texto, 14)
 
 
     def draw_popup_pedido(self):
@@ -534,9 +579,6 @@ class MapaWindow(arcade.Window):
     )
 
 
-
-
-
     def on_draw(self):
         self.clear()
         if self.mostrar_meta_popup:
@@ -574,6 +616,9 @@ class MapaWindow(arcade.Window):
         self.pickup_list.draw()
         self.dropoff_list.draw()
         self.draw_popup_pedido()
+        if self.mostrar_inventario_popup:
+            self.draw_inventario_popup()
+            return
 
 
 
@@ -618,6 +663,49 @@ class MapaWindow(arcade.Window):
                     self.guardar_en_slot(slot)
                 return
             return
+        if self.mostrar_inventario_popup:
+            if key == arcade.key.I or key == arcade.key.ESCAPE:
+                self.mostrar_inventario_popup = False
+                return
+
+            if self.player_sprite.inventario.cantidad() > 0:
+                if key == arcade.key.UP:
+                    self.inventario_seleccion_idx = (self.inventario_seleccion_idx - 1) % self.player_sprite.inventario.cantidad()
+                
+                elif key == arcade.key.DOWN:
+                    self.inventario_seleccion_idx = (self.inventario_seleccion_idx + 1) % self.player_sprite.inventario.cantidad()
+                
+                elif key == arcade.key.D:
+                    self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
+                    self.modo_orden = 'deadline'
+                    self.inventario_seleccion_idx = 0 
+                
+                elif key == arcade.key.Z:
+                    self.lista_inventario_visible = self.player_sprite.inventario.acomodar_prioridad()
+                    self.modo_orden = 'prioridad'
+                    self.inventario_seleccion_idx = 0 
+
+                elif key == arcade.key.ENTER:
+                    self.pedido_activo_para_entrega = self.lista_inventario_visible[self.inventario_seleccion_idx]
+                    ######
+                    print(f"Pedido seleccionado para entrega: {self.pedido_activo_para_entrega.id}")
+                    self.mostrar_inventario_popup = False
+            
+            return 
+        if key == arcade.key.I:
+            self.mostrar_inventario_popup = True
+            self.inventario_seleccion_idx = 0 
+            if self.modo_orden == 'prioridad':
+                self.lista_inventario_visible = self.player_sprite.inventario.acomodar_prioridad()
+            else:
+                self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
+            return
+        #########
+
+
+
+
+
         if self.nombre_popup_activo:
             if key == arcade.key.ENTER:
                 self.nombre_popup_activo = False
@@ -721,10 +809,12 @@ class MapaWindow(arcade.Window):
         response = requests.get(f"{BASE_URL}/city/jobs").json()
         jobs = response.get("data", [])
         for p in jobs:
+            deadline_str = p["deadline"]
+            deadline_obj = datetime.fromisoformat(deadline_str.replace('Z', '+00:00'))
             pedido_obj = Pedido(
                 id=p["id"],
                 peso=p["weight"],
-                deadline=p["deadline"],
+                deadline=deadline_obj,
                 pago=p["payout"],
                 prioridad=p.get("priority", 0),
                 coord_recoger=p["pickup"],
@@ -809,24 +899,24 @@ class MapaWindow(arcade.Window):
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
 
-
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
-        for pickup in pickups_hit:
-            pedido_obj = self.pedidos_dict[pickup.pedido_id]
-            print(f"Se recolectó el pedido {pickup.pedido_id}")
-            self.player_sprite.pickup(pedido_obj, datetime.now())
-            pickup.remove_from_sprite_lists()
-        dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
-        for dropoff in dropoffs_hit:
-            pedido_obj = self.pedidos_dict.get(dropoff.pedido_id)
-            if not pedido_obj:
-                continue
-            if self.player_sprite.inventario.buscar_pedido(pedido_obj.id):
-                print(f"Se entregó el pedido {dropoff.pedido_id}")
-                self.player_sprite.dropoff(pedido_obj.id, datetime.now())
-                dropoff.remove_from_sprite_lists()
-            else:
-                print(f"No se puede entregar {dropoff.pedido_id}, no está en el inventario.")
+        if pickups_hit:
+            for pickup in pickups_hit:
+                pedido_obj = self.pedidos_dict[pickup.pedido_id]
+                if self.player_sprite.inventario.agregar_pedido(pedido_obj):
+                    ###
+                    print(f"Se recolectó el pedido {pedido_obj.id} y se guardó.")
+                    pickup.remove_from_sprite_lists()
+        else:
+            dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
+            for dropoff in dropoffs_hit:
+                if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
+                    ####
+                    print(f"Se entregó el pedido seleccionado: {self.pedido_activo_para_entrega.id}")
+                    self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, datetime.now())
+                    self.pedido_activo_para_entrega = None
+                    dropoff.remove_from_sprite_lists()
+
             if self.player_sprite.ingresos >= self.meta_ingresos:
                 self.meta_cumplida = True
         self.tiempo_global += delta_time

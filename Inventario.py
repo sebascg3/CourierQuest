@@ -8,10 +8,10 @@ class NodoPedido:
 
 
 class Inventario:
-    def __init__(self, peso_maximo=5):
+    def __init__(self):
         self.inicio = None
         self.fin = None
-        self.peso_maximo = peso_maximo
+        self.peso_maximo = 10
         self._peso_total = 0
         self._cantidad = 0
 

@@ -37,14 +37,9 @@ class Repartidor(arcade.Sprite):
         pedido = self.inventario.buscar_pedido(pedido_id)
         if not pedido:
             return False
+        delta = (tiempo_entrega - pedido.deadline).total_seconds()
 
-        self.inventario.quitar_pedido(pedido_id)
-        self.peso_total -= pedido.peso
-
-        deadline = datetime.fromisoformat(pedido.deadline)
-        delta = (tiempo_entrega - deadline).total_seconds()
-
-        if delta <= -0.2 * (deadline - self.tiempo_actual).total_seconds():
+        if delta <= -0.2 * (pedido.deadline - self.tiempo_actual).total_seconds():
             self.reputacion += 5
         elif delta <= 0:
             self.reputacion += 3
@@ -62,6 +57,8 @@ class Repartidor(arcade.Sprite):
 
         if self.reputacion < 20:
             self.estado = "Derrota"
+
+        self.inventario.quitar_pedido(pedido_id)
 
         return True
 

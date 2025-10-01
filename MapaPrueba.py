@@ -708,7 +708,7 @@ class MapaWindow(arcade.Window):
 
     def on_key_press(self, key, modifiers):
         
-        if self.mostrar_meta_popup and key==arcade.key.ENTER:
+        if self.mostrar_meta_popup and key == arcade.key.ENTER:
             self.mostrar_meta_popup = False
             return
         if getattr(self, 'mostrar_popup_puntajes', False):
@@ -747,6 +747,17 @@ class MapaWindow(arcade.Window):
                     self.guardar_en_slot(slot)
                 return
             return
+
+        if self.nombre_popup_activo:
+            if key == arcade.key.ENTER:
+                self.nombre_popup_activo = False
+                self.player_sprite.nombre = self.nombre_jugador if self.nombre_jugador else "Jugador"
+            elif key == arcade.key.BACKSPACE:
+                self.nombre_jugador = self.nombre_jugador[:-1]
+            elif 32 <= key <= 126 and len(self.nombre_jugador) < 16:
+                self.nombre_jugador += chr(key)
+            return
+
         if self.mostrar_inventario_popup:
             if key == arcade.key.I or key == arcade.key.ESCAPE:
                 self.mostrar_inventario_popup = False
@@ -785,16 +796,6 @@ class MapaWindow(arcade.Window):
                 self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
             return
 
-        if self.nombre_popup_activo:
-            if key == arcade.key.ENTER:
-                self.nombre_popup_activo = False
-                self.player_sprite.nombre = self.nombre_jugador if self.nombre_jugador else "Jugador"
-            elif key == arcade.key.BACKSPACE:
-                self.nombre_jugador = self.nombre_jugador[:-1]
-            # Solo letras, números y espacio
-            elif 32 <= key <= 126 and len(self.nombre_jugador) < 16:
-                self.nombre_jugador += chr(key)
-            return
         if key == arcade.key.P:
             self.cargar_y_mostrar_puntajes()
             return

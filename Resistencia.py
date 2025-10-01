@@ -20,8 +20,7 @@ class Resistencia:
         # Si no está agotado, proceder normal (se mueve libremente hasta llegar a 0)
         if esta_moviendo:
             # Gasto base por movimiento
-            gasto_base = 0.5 * delta_time
-            # Aumenta con peso (más peso, más gasto)
+            gasto_base = 1.0 * delta_time            # Aumenta con peso (más peso, más gasto)
             gasto_peso = 0.2 * (peso_total / 10.0) * delta_time  # Asume peso max ~10 para escalar
             # Aumenta con clima adverso
             gasto_clima = 0.0

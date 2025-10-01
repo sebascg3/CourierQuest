@@ -6,26 +6,58 @@ from Pedido import Pedido
 from Repartidor import Repartidor
 from Clima import Clima
 from MarkovClima import MarkovClima
-from Resistencia import Resistencia  
+from Resistencia import Resistencia
 from datetime import datetime
+import os, json
 
 CELL_SIZE = 50
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
 
-city_data = requests.get(f"{BASE_URL}/city/map").json()
-data = city_data.get("data", {})
+# --- función para cargar backup si falla el API ---
+def cargar_backup():
+    ruta = os.path.join("data", "backup.json")
+    if os.path.exists(ruta):
+        with open(ruta, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
 
+# --- city/map ---
+try:
+    city_data = requests.get(f"{BASE_URL}/city/map", timeout=5).json()
+except Exception as e:
+    print(f"[WARN] city/map API failed: {e}")
+    backup = cargar_backup()
+    if backup and "city_map" in backup:
+        city_data = backup["city_map"]
+    else:
+        raise RuntimeError("No se pudo obtener city/map ni backup.json")
+
+data = city_data.get("data", {})
 tiles = data.get("tiles", [])
 height = data.get("height", 0)
 width = data.get("width", 0)
-
 mapa = tiles
 ROWS = len(mapa)
 COLS = len(mapa[0])
 
+SURFACE_WEIGHTS = {
+    "C": 1.0,   # Calle / camino
+    "P": 0.5,  # Parque (más lento)
+    "B": 0.0,   # Edificio (intransitable, ya se bloquea antes)
+}
+
 
 # --- Clima y Markov ---
-weather_data = requests.get(f"{BASE_URL}/city/weather?city=TigerCity&mode=seed").json()
+try:
+    weather_data = requests.get(f"{BASE_URL}/city/weather?city=TigerCity&mode=seed", timeout=5).json()
+except Exception as e:
+    print(f"[WARN] weather API failed: {e}")
+    backup = cargar_backup()
+    if backup and "weather" in backup:
+        weather_data = backup["weather"]
+    else:
+        raise RuntimeError("No se pudo obtener weather ni backup.json")
+
 weather_info = weather_data.get("data", {})
 initial_weather = weather_info.get("initial", {})
 
@@ -46,6 +78,22 @@ for fila in cond_names:
     matrizT.append(fila_probs)
 
 markov = MarkovClima(cond_names, matrizT)
+
+BACKUP_DATA = {
+    "city_map": city_data,
+    "weather": weather_data,
+    "jobs": None
+}
+
+def save_backup():
+    """Guarda BACKUP_DATA en data/backup.json."""
+    try:
+        os.makedirs("data", exist_ok=True)
+        ruta = os.path.join("data", "backup.json")
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(BACKUP_DATA, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[WARN] No se pudo escribir backup.json: {e}")
 
 class MapaWindow(arcade.Window):
     # --- Popup de cargar partida ---
@@ -153,7 +201,7 @@ class MapaWindow(arcade.Window):
             },
             'pedidos_activos': list(self.pedidos_activos.keys()),
             'pedidos_pendientes': [p.id for p in self.pedidos_pendientes],
-            'pedido_actual': self.pedido_actual.id if self.pedido_actual else None,
+            'pedido_current': self.pedido_actual.id if self.pedido_actual else None,
             # Guardar pickups y dropoffs
             'pickups': [
                 {'pedido_id': s.pedido_id, 'center_x': s.center_x, 'center_y': s.center_y}
@@ -837,7 +885,16 @@ class MapaWindow(arcade.Window):
         self.dropoff_list.append(dropoff_sprite)
 
     def cargar_pedidos(self):
-        response = requests.get(f"{BASE_URL}/city/jobs").json()
+        # --- intenta API, si falla usa backup ---
+        try:
+            response = requests.get(f"{BASE_URL}/city/jobs", timeout=5).json()
+        except Exception as e:
+            print(f"[WARN] jobs API failed: {e}")
+            backup = cargar_backup()
+            if backup and "jobs" in backup:
+                response = backup["jobs"]
+            else:
+                raise RuntimeError("No se pudo obtener jobs ni backup.json")
         jobs = response.get("data", [])
         for p in jobs:
             deadline_str = p["deadline"]
@@ -853,6 +910,8 @@ class MapaWindow(arcade.Window):
             )        
             self.pedidos_dict[pedido_obj.id] = pedido_obj
             self.pedidos_pendientes.append(pedido_obj)
+        BACKUP_DATA["jobs"] = response
+        save_backup()
 
     def on_update(self, delta_time):
         self.actualizar_notificaciones(delta_time)
@@ -917,8 +976,21 @@ class MapaWindow(arcade.Window):
 
             mult_resistencia = self.player_sprite.resistencia_obj.get_multiplicador_velocidad()
 
+            mult_surface_actual = self.obtener_multiplicador_superficie(self.player_sprite.row, self.player_sprite.col)
+            mult_surface_dest = self.obtener_multiplicador_superficie(self.target_row, self.target_col)
+            mult_surface = (mult_surface_actual + mult_surface_dest) / 2.0
+            if mult_surface <= 0:
+                mult_surface = 0.01
+
             velocidad_base = self.move_speed  
-            velocidad_actual_por_frame = velocidad_base * mult_clima * mult_peso * mult_resistencia * delta_time
+            velocidad_actual_por_frame = (
+                velocidad_base *
+                mult_clima *
+                mult_peso *
+                mult_resistencia *
+                mult_surface *
+                delta_time
+            )
 
             if dist < velocidad_actual_por_frame:
                 self.player_sprite.center_x = self.target_x
@@ -940,17 +1012,28 @@ class MapaWindow(arcade.Window):
         else:
             dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
             for dropoff in dropoffs_hit:
+                # --- lógica de entrega flexible ---
+                pedido_entregar = None
+                # Si hay pedido seleccionado, intenta ese
                 if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
-                    mensajes = self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, datetime.now())
+                    pedido_entregar = self.pedido_activo_para_entrega
+                else:
+                    # Si no hay seleccionado, busca en inventario si tiene ese pedido
+                    nodo = self.player_sprite.inventario.inicio
+                    while nodo:
+                        if nodo.pedido.id == dropoff.pedido_id:
+                            pedido_entregar = nodo.pedido
+                            break
+                        nodo = nodo.siguiente
+                if pedido_entregar:
+                    mensajes = self.player_sprite.dropoff(pedido_entregar.id, datetime.now())
                     if mensajes:
                         for texto, color in mensajes:
                             self.agregar_notificacion(texto, color)
-                    
-                    self.pedido_activo_para_entrega = None
+                    if self.pedido_activo_para_entrega and pedido_entregar.id == self.pedido_activo_para_entrega.id:
+                        self.pedido_activo_para_entrega = None
                     dropoff.remove_from_sprite_lists()
-
-            if self.player_sprite.ingresos >= self.meta_ingresos:
-                self.meta_cumplida = True
+            # ...existing code...
         self.tiempo_global += delta_time
         if not self.mostrar_pedido and self.pedidos_pendientes:
             if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:
@@ -961,6 +1044,13 @@ class MapaWindow(arcade.Window):
 
 ###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
        
+
+    def obtener_multiplicador_superficie(self, row, col):
+        """Devuelve el multiplicador de velocidad según la superficie de la celda."""
+        if 0 <= row < ROWS and 0 <= col < COLS:
+            tipo = mapa[row][col]
+            return SURFACE_WEIGHTS.get(tipo, 1.0)
+        return 1.0
 
 if __name__ == "__main__":
     MapaWindow()

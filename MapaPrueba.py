@@ -7,6 +7,7 @@ from Repartidor import Repartidor
 from Clima import Clima
 from MarkovClima import MarkovClima
 from Resistencia import Resistencia
+import math
 from datetime import datetime, timezone
 import os, json
 
@@ -710,7 +711,20 @@ class MapaWindow(arcade.Window):
                 arcade.draw_rect_outline(rect, arcade.color.BLACK, 1)
         self.player_list.draw()
         self.pickup_list.draw()
+        sprite_activo = None
+        escala_original = 0.8 
+        if self.pedido_activo_para_entrega:
+            for sprite in self.dropoff_list:
+                if sprite.pedido_id == self.pedido_activo_para_entrega.id:
+                    sprite_activo = sprite
+                    break
+        if sprite_activo:
+            pulso = 1.2 + math.sin(self.tiempo_global * 5) * 0.2
+            sprite_activo.scale = escala_original * pulso
         self.dropoff_list.draw()
+        if sprite_activo:
+            sprite_activo.scale = escala_original
+
         self.draw_popup_pedido()
         self.draw_notificaciones()
         if self.mostrar_inventario_popup:

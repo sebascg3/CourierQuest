@@ -412,7 +412,6 @@ class MapaWindow(arcade.Window):
         self.mostrar_pedido = False
         self.tiempo_ultimo_popup = 0
         self.tiempo_global = 0  
-        self.intervalo_popup = 30 
 
         # Estado de transición de clima
         self.transicion_clima = {'activa': False}
@@ -943,7 +942,8 @@ class MapaWindow(arcade.Window):
                 pago=p["payout"],
                 prioridad=p.get("priority", 0),
                 coord_recoger=p["pickup"],
-                coord_entregar=p["dropoff"]
+                coord_entregar=p["dropoff"],
+                release_time=p.get("release_time", 0)
             )
             tiempo_inicial_juego = 15 * 60
             pedido_obj.deadline_contador = tiempo_inicial_juego - duracion_en_segundos
@@ -1087,13 +1087,14 @@ class MapaWindow(arcade.Window):
             for sprite in self.dropoff_list:
                 if sprite.pedido_id == pedido_id:
                     sprite.remove_from_sprite_lists()
-
-
+#logica para los pop ups de pedidos 
         if not self.mostrar_pedido and self.pedidos_pendientes:
-            if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:
-                self.pedido_actual = self.pedidos_pendientes.pop(0)
-                self.mostrar_pedido = True
-                self.tiempo_ultimo_popup = self.tiempo_global
+            for pedido in self.pedidos_pendientes:
+                if self.tiempo_global >= pedido.release_time:
+                    self.pedido_actual = pedido
+                    self.mostrar_pedido = True
+                    self.pedidos_pendientes.remove(pedido)
+                    break
 
 ###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
        

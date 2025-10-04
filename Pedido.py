@@ -4,6 +4,7 @@ class Pedido:
         self.id = id
         self.peso = peso
         self.deadline = deadline
+        self.deadline_contador = 0.0
         self.pago = pago
         self.prioridad = prioridad  
         self.coord_recoger = coord_recoger 

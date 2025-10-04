@@ -35,23 +35,24 @@ class Repartidor(arcade.Sprite):
             return True
         return False
 
-    def dropoff(self, pedido_id: str, tiempo_entrega: datetime):
+    def dropoff(self, pedido_id: str, tiempo_entrega_contador: float):
         pedido = self.inventario.buscar_pedido(pedido_id)
         if not pedido:
             return [] 
         mensajes_feedback = []
-        verde = arcade.color.FOREST_GREEN
-        rojo = arcade.color.FIREBRICK
+        lavanda = arcade.color.BRIGHT_LAVENDER
+        azul = arcade.color.AERO_BLUE
         oro = arcade.color.GOLD
 
-        delta_segundos = (tiempo_entrega - pedido.deadline).total_seconds()
+        delta_segundos = tiempo_entrega_contador - pedido.deadline_contador
         
-        if delta_segundos > 0: 
+        if delta_segundos < 0: 
             self.racha_entregas_sin_penalizacion = 0
             
+            retraso = abs(delta_segundos) 
             penalizacion = 0
-            if delta_segundos <= 30: penalizacion = -2
-            elif delta_segundos <= 120: penalizacion = -5
+            if retraso <= 30: penalizacion = -2
+            elif retraso <= 120: penalizacion = -5
             else: penalizacion = -10
 
             if self.reputacion >= 85 and not self.primera_tardanza_del_dia_usada:
@@ -60,19 +61,19 @@ class Repartidor(arcade.Sprite):
                 mensajes_feedback.append( ("1ra Tarde: Penalización Reducida", oro) )
             
             self.reputacion += penalizacion
-            mensajes_feedback.append( (f"Entrega Tardía: {int(penalizacion)} Rep.", rojo) )
+            mensajes_feedback.append( (f"Entrega Tardía: {int(penalizacion)} Rep.", azul) )
 
-        else: 
-            tiempo_recogida = pedido.tiempo_recogido
-            ventana_total_entrega = (pedido.deadline - tiempo_recogida).total_seconds()
+        else:  
+            tiempo_total_asignado = (15 * 60) - pedido.deadline_contador 
+            tiempo_usado = (15 * 60) - tiempo_entrega_contador 
             
             bonificacion = 0
-            if ventana_total_entrega > 0 and abs(delta_segundos) / ventana_total_entrega >= 0.20:
+            if tiempo_usado <= tiempo_total_asignado * 0.8:
                 bonificacion = 5
-                mensajes_feedback.append( (f"¡Entrega Temprana! +{bonificacion} Rep.", verde) )
+                mensajes_feedback.append( (f"¡Entrega Temprana! +{bonificacion} Rep.", lavanda) )
             else:
                 bonificacion = 3
-                mensajes_feedback.append( (f"Entrega a Tiempo: +{bonificacion} Rep.", verde) )
+                mensajes_feedback.append( (f"Entrega a Tiempo: +{bonificacion} Rep.", lavanda) )
             
             self.reputacion += bonificacion
             self.racha_entregas_sin_penalizacion += 1
@@ -92,7 +93,7 @@ class Repartidor(arcade.Sprite):
         
         if self.reputacion < 20:
             self.estado = "Derrota"
-            mensajes_feedback.append( ("¡REPUTACIÓN MUY BAJA! - DERROTA", rojo) )
+            mensajes_feedback.append( ("¡REPUTACIÓN MUY BAJA! - DERROTA", azul) )
         
         return mensajes_feedback
 

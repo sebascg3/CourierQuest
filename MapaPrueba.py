@@ -356,6 +356,7 @@ class MapaWindow(arcade.Window):
 
 
     def __init__(self):
+        self.hora_inicio_juego_utc = datetime.now(timezone.utc)
         self.meta_ingresos = 1100 
         self.meta_cumplida = False
         self.mostrar_meta_popup = True
@@ -898,17 +899,24 @@ class MapaWindow(arcade.Window):
                 raise RuntimeError("No se pudo obtener jobs ni backup.json")
         jobs = response.get("data", [])
         for p in jobs:
-            deadline_str = p["deadline"]
-            deadline_obj = datetime.fromisoformat(deadline_str.replace('Z', '+00:00'))
+            deadline_api = datetime.fromisoformat(p["deadline"].replace('Z', '+00:00'))
+            duracion_en_segundos = (deadline_api - self.hora_inicio_juego_utc).total_seconds()
+            
+            if duracion_en_segundos < 0:
+                duracion_en_segundos = random.randint(180, 420)
+
             pedido_obj = Pedido(
                 id=p["id"],
                 peso=p["weight"],
-                deadline=deadline_obj,
+                deadline=deadline_api,
                 pago=p["payout"],
                 prioridad=p.get("priority", 0),
                 coord_recoger=p["pickup"],
                 coord_entregar=p["dropoff"]
-            )        
+            )
+            tiempo_inicial_juego = 15 * 60
+            pedido_obj.deadline_contador = tiempo_inicial_juego - duracion_en_segundos
+                    
             self.pedidos_dict[pedido_obj.id] = pedido_obj
             self.pedidos_pendientes.append(pedido_obj)
         BACKUP_DATA["jobs"] = response
@@ -1004,9 +1012,6 @@ class MapaWindow(arcade.Window):
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
 
-      # En el método on_update de MapaPrueba.py
-
-        # --- Lógica de Colisiones Corregida ---
         
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
         
@@ -1021,25 +1026,16 @@ class MapaWindow(arcade.Window):
         else:
             dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
             for dropoff in dropoffs_hit:
-                
-                # ✅ CORRECCIÓN 1: La lógica ahora es estricta.
-                # Solo se entrega si tienes un pedido seleccionado Y estás en el lugar correcto.
                 if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
                     
-                    # Llamamos al dropoff del repartidor
-                    mensajes = self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, datetime.now(timezone.utc))
+                    mensajes = self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, self.total_time)
                     
                     if mensajes:
                         for texto, color in mensajes:
                             self.agregar_notificacion(texto, color)
                     
-                    # Limpiamos la selección y el ícono
                     self.pedido_activo_para_entrega = None
                     dropoff.remove_from_sprite_lists()
-
-        # ✅ CORRECCIÓN 2: Asegúrate de que tu cálculo de velocidad también use el peso del inventario
-        # Esta sección debería estar en tu bloque 'if self.moving:'
-        # peso_total = self.player_sprite.inventario.peso_total() # Así se lee el peso correctamente
         self.tiempo_global += delta_time
         if not self.mostrar_pedido and self.pedidos_pendientes:
             if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:

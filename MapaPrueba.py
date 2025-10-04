@@ -1026,6 +1026,9 @@ class MapaWindow(arcade.Window):
                 if self.player_sprite.pickup(pedido_obj, self.total_time):
                     self.agregar_notificacion(f"Recogido: {pedido_obj.id}", arcade.color.WHITE_SMOKE)
                     pickup.remove_from_sprite_lists()
+
+                    if pedido_obj.id in self.pedidos_activos:
+                        del self.pedidos_activos[pedido_obj.id]
                 else:
                     self.agregar_notificacion("¡Inventario Lleno!", arcade.color.RED)
         else:

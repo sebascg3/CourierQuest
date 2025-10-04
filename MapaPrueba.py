@@ -7,7 +7,7 @@ from Repartidor import Repartidor
 from Clima import Clima
 from MarkovClima import MarkovClima
 from Resistencia import Resistencia
-from datetime import datetime
+from datetime import datetime, timezone
 import os, json
 
 CELL_SIZE = 50
@@ -456,7 +456,7 @@ class MapaWindow(arcade.Window):
             pedidos.append(str(nodo.pedido.id))
             nodo = nodo.siguiente
         pedidos_text = f"Pedidos: {', '.join(pedidos) if pedidos else 'Ninguno'}"
-        peso_text = f"Peso: {self.player_sprite.peso_total:.1f}/{self.player_sprite.inventario.peso_maximo}"
+        peso_text = f"Peso: {self.player_sprite.inventario.peso_total():.1f}/{self.player_sprite.inventario.peso_maximo:.1f}"
         ingresos_text = f"Ingresos: ${self.player_sprite.ingresos:.2f}"
         reputacion_text = f"Reputación: {self.player_sprite.reputacion}"
         clima_text = f"Clima: {self.clima.condicion}\nIntensidad: {self.clima.intensidad:.2f}\nTiempo restante: {int(self.clima.tiempoRestante)}s"
@@ -969,9 +969,9 @@ class MapaWindow(arcade.Window):
                 mult_clima *= (1 - self.clima.intensidad * 0.5)
             mult_clima = max(mult_clima, 0.1)
 
-            peso_total = self.player_sprite.peso_total
+            peso_total = self.player_sprite.inventario.peso_total()
             peso_maximo = self.player_sprite.inventario.peso_maximo
-            speed_reduction_factor = 0.8  
+            speed_reduction_factor = 0.8
             reduction = (peso_total / peso_maximo) * speed_reduction_factor if peso_maximo > 0 else 0
             mult_peso = max(1.0 - reduction, 0.2)
 
@@ -1004,37 +1004,42 @@ class MapaWindow(arcade.Window):
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
 
+      # En el método on_update de MapaPrueba.py
+
+        # --- Lógica de Colisiones Corregida ---
+        
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
+        
         if pickups_hit:
             for pickup in pickups_hit:
-                 pedido_obj = self.pedidos_dict[pickup.pedido_id]
-                 if self.player_sprite.pickup(pedido_obj, datetime.now()):
+                pedido_obj = self.pedidos_dict[pickup.pedido_id]
+                if self.player_sprite.pickup(pedido_obj, datetime.now(timezone.utc)):
+                    self.agregar_notificacion(f"Recogido: {pedido_obj.id}", arcade.color.WHITE_SMOKE)
                     pickup.remove_from_sprite_lists()
+                else:
+                    self.agregar_notificacion("¡Inventario Lleno!", arcade.color.RED)
         else:
             dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
             for dropoff in dropoffs_hit:
-                # --- lógica de entrega flexible ---
-                pedido_entregar = None
-                # Si hay pedido seleccionado, intenta ese
+                
+                # ✅ CORRECCIÓN 1: La lógica ahora es estricta.
+                # Solo se entrega si tienes un pedido seleccionado Y estás en el lugar correcto.
                 if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
-                    pedido_entregar = self.pedido_activo_para_entrega
-                else:
-                    # Si no hay seleccionado, busca en inventario si tiene ese pedido
-                    nodo = self.player_sprite.inventario.inicio
-                    while nodo:
-                        if nodo.pedido.id == dropoff.pedido_id:
-                            pedido_entregar = nodo.pedido
-                            break
-                        nodo = nodo.siguiente
-                if pedido_entregar:
-                    mensajes = self.player_sprite.dropoff(pedido_entregar.id, datetime.now())
+                    
+                    # Llamamos al dropoff del repartidor
+                    mensajes = self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, datetime.now(timezone.utc))
+                    
                     if mensajes:
                         for texto, color in mensajes:
                             self.agregar_notificacion(texto, color)
-                    if self.pedido_activo_para_entrega and pedido_entregar.id == self.pedido_activo_para_entrega.id:
-                        self.pedido_activo_para_entrega = None
+                    
+                    # Limpiamos la selección y el ícono
+                    self.pedido_activo_para_entrega = None
                     dropoff.remove_from_sprite_lists()
-            # ...existing code...
+
+        # ✅ CORRECCIÓN 2: Asegúrate de que tu cálculo de velocidad también use el peso del inventario
+        # Esta sección debería estar en tu bloque 'if self.moving:'
+        # peso_total = self.player_sprite.inventario.peso_total() # Así se lee el peso correctamente
         self.tiempo_global += delta_time
         if not self.mostrar_pedido and self.pedidos_pendientes:
             if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:

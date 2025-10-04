@@ -67,7 +67,8 @@ conditions = weather_info.get("conditions", [])
 transition = weather_info.get("transition", {})
 
 # Normaliza nombres de condiciones
-cond_names = [c["condition"] if isinstance(c, dict) and "condition" in c else c for c in conditions]
+cond_names = [c["condition"] if isinstance(c, dict) and "condition" in c 
+              else c for c in conditions]
 
 # Convierte el diccionario de transición a matriz cuadrada NxN
 matrizT = []
@@ -90,10 +91,10 @@ BACKUP_DATA = {
 def save_backup():
     """Guarda BACKUP_DATA en data/backup.json."""
     try:
-        os.makedirs("data", exist_ok=True)
+        os.makedirs("data", exist_ok = True)
         ruta = os.path.join("data", "backup.json")
         with open(ruta, "w", encoding="utf-8") as f:
-            json.dump(BACKUP_DATA, f, ensure_ascii=False, indent=2)
+            json.dump(BACKUP_DATA, f, ensure_ascii = False, indent = 2)
     except Exception as e:
         print(f"[WARN] No se pudo escribir backup.json: {e}")
 
@@ -121,11 +122,14 @@ class MapaWindow(arcade.Window):
         arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
         arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
         texto = "¿Cuál espacio deseas cargar?\nSelecciona 1, 2 o 3"
-        arcade.draw_text(texto, x + 20, y + alto - 25, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top", multiline=True, width=ancho-40)
+        arcade.draw_text(texto, x + 20, y + alto - 25, arcade.color.WHITE, 18, anchor_x = "left",
+                          anchor_y = "top", multiline = True, width=ancho-40)
         if self.slot_cargar_seleccionado is not None:
-            arcade.draw_text(f"Seleccionado: Slot {self.slot_cargar_seleccionado}", x + 20, y + 20, arcade.color.YELLOW, 14)
+            arcade.draw_text(f"Seleccionado: Slot {self.slot_cargar_seleccionado}",
+                              x + 20, y + 20, arcade.color.YELLOW, 14)
         else:
-            arcade.draw_text("Presiona ESC para cancelar", x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+            arcade.draw_text("Presiona ESC para cancelar",
+                              x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
 
     def cargar_de_slot(self, slot:int):
         """Placeholder de carga real. Aquí se implementaría la lógica de restaurar el estado."""
@@ -136,7 +140,7 @@ class MapaWindow(arcade.Window):
         import os, json
         ruta = os.path.join('data', 'puntajes.json')
         if os.path.exists(ruta):
-            with open(ruta, 'r', encoding='utf-8') as f:
+            with open(ruta, 'r', encoding = 'utf-8') as f:
                 try:
                     puntajes = json.load(f)
                 except Exception:
@@ -144,7 +148,7 @@ class MapaWindow(arcade.Window):
         else:
             puntajes = []
         # Ordena de mayor a menor
-        puntajes.sort(key=lambda p: p['score'], reverse=True)
+        puntajes.sort(key = lambda p: p['score'], reverse=True)
         self.popup_puntajes = puntajes
         self.mostrar_popup_puntajes = True
     
@@ -295,15 +299,18 @@ class MapaWindow(arcade.Window):
         y = self.window_height // 2 - alto // 2
         arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_GREEN)
         arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
-        arcade.draw_text("Marcadores", x + 20, y + alto - 30, arcade.color.WHITE, 20, anchor_x="left", anchor_y="top")
+        arcade.draw_text("Marcadores",
+                          x + 20, y + alto - 30, arcade.color.WHITE, 20, anchor_x="left", anchor_y="top")
         if hasattr(self, 'popup_puntajes') and self.popup_puntajes:
             for i, p in enumerate(self.popup_puntajes[:10]):
                 nombre = p['nombre']
                 score = p['score']
                 arcade.draw_text(f"{i+1}. {nombre}: {score}", x + 30, y + alto - 60 - i*28, arcade.color.YELLOW, 16, anchor_x="left", anchor_y="top")
         else:
-            arcade.draw_text("No hay puntajes guardados.", x + 30, y + alto - 60, arcade.color.LIGHT_GRAY, 16, anchor_x="left", anchor_y="top")
-        arcade.draw_text("Presiona ESC para cerrar", x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+            arcade.draw_text("No hay puntajes guardados.",
+                              x + 30, y + alto - 60, arcade.color.LIGHT_GRAY, 16, anchor_x="left", anchor_y="top")
+        arcade.draw_text("Presiona ESC para cerrar",
+                          x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
     def pedir_nombre_popup(self):
         self.nombre_popup_activo = True
         self.nombre_jugador = ""
@@ -314,9 +321,12 @@ class MapaWindow(arcade.Window):
         y = self.window_height // 2 - alto // 2
         arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_BLUE)
         arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
-        arcade.draw_text("Ingresa tu nombre de jugador:", x + 20, y + alto - 30, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top")
-        arcade.draw_text(self.nombre_jugador + "_", x + 20, y + alto - 65, arcade.color.WHITE, 16, anchor_x="left", anchor_y="top")
-        arcade.draw_text("Presiona Enter para continuar y suerte!", x + 20, y + 15, arcade.color.LIGHT_GRAY, 12)
+        arcade.draw_text("Ingresa tu nombre de jugador:",
+                          x + 20, y + alto - 30, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top")
+        arcade.draw_text(self.nombre_jugador + "_",
+                          x + 20, y + alto - 65, arcade.color.WHITE, 16, anchor_x="left", anchor_y="top")
+        arcade.draw_text("Presiona Enter para continuar y suerte!",
+                          x + 20, y + 15, arcade.color.LIGHT_GRAY, 12)
 
     def guardar_puntaje_si_termina(self):
         """
@@ -540,8 +550,8 @@ class MapaWindow(arcade.Window):
             clima_text,
             clima_x, clima_y,
             arcade.color.BLACK, hud_font_size,
-            anchor_x="center", anchor_y="bottom",
-            multiline=True, width=140
+            anchor_x = "center", anchor_y = "bottom",
+            multiline = True, width=140
         )
 
     def draw_inventario_popup(self):
@@ -986,7 +996,6 @@ class MapaWindow(arcade.Window):
             print("¡Agotado! Descansando hasta recuperar 30% de resistencia.")
 
 
-
         if self.moving:
             dx = self.target_x - self.player_sprite.center_x
             dy = self.target_y - self.player_sprite.center_y
@@ -1086,16 +1095,16 @@ class MapaWindow(arcade.Window):
                 self.mostrar_pedido = True
                 self.tiempo_ultimo_popup = self.tiempo_global
 
-
 ###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
        
-
     def obtener_multiplicador_superficie(self, row, col):
         """Devuelve el multiplicador de velocidad según la superficie de la celda."""
         if 0 <= row < ROWS and 0 <= col < COLS:
             tipo = mapa[row][col]
             return SURFACE_WEIGHTS.get(tipo, 1.0)
         return 1.0
+
+
 
 if __name__ == "__main__":
     MapaWindow()

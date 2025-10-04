@@ -559,7 +559,7 @@ class MapaWindow(arcade.Window):
         titulo = f"Inventario de Pedidos (Orden: {self.modo_orden.capitalize()})"
         arcade.draw_text(titulo, x + ancho / 2, y + alto - 30,
                          arcade.color.WHITE, 20, anchor_x="center")
-        arcade.draw_text("[↑↓] Navegar  [ENTER] Seleccionar  [I] Cerrar", x + ancho / 2, y + alto - 60,
+        arcade.draw_text("[↑↓] Navegar  [ENTER] Seleccionar [C] Cancelar [I] Cerrar", x + ancho / 2, y + alto - 60,
                          arcade.color.LIGHT_GRAY, 12, anchor_x="center")
         arcade.draw_text("[D] Ordenar por Deadline  [Z] Ordenar por Prioridad", x + ancho / 2, y + 20,
                          arcade.color.CYAN, 12, anchor_x="center")
@@ -788,6 +788,22 @@ class MapaWindow(arcade.Window):
                     ######
                     print(f"Pedido seleccionado para entrega: {self.pedido_activo_para_entrega.id}")
                     self.mostrar_inventario_popup = False
+                elif key == arcade.key.C:
+                    pedido_a_cancelar = self.lista_inventario_visible[self.inventario_seleccion_idx]
+                    
+                    if self.player_sprite.cancelar_pedido(pedido_a_cancelar.id):
+                    
+                        self.agregar_notificacion(f"Pedido Cancelado: -4 Rep.", arcade.color.ORANGE_RED)
+                        
+                        for sprite in self.pickup_list:
+                            if sprite.pedido_id == pedido_a_cancelar.id:
+                                sprite.remove_from_sprite_lists()
+                        for sprite in self.dropoff_list:
+                            if sprite.pedido_id == pedido_a_cancelar.id:
+                                sprite.remove_from_sprite_lists()
+                        if self.pedido_activo_para_entrega and self.pedido_activo_para_entrega.id == pedido_a_cancelar.id:
+                            self.pedido_activo_para_entrega = None
+                        self.mostrar_inventario_popup = False
             
             return 
         if key == arcade.key.I:

@@ -92,9 +92,22 @@ class Repartidor(arcade.Sprite):
         
         if self.reputacion < 20:
             self.estado = "Derrota"
-            mensajes_feedback.append( ("¡REPUTACIÓN MUY BAJA! - DERROTA", azul) )
+            mensajes_feedback.append( ("REPUTACIÓN MUY BAJA - DERROTA", azul) )
         
         return mensajes_feedback
+    
+    def cancelar_pedido(self, pedido_id: str):
+        pedido = self.inventario.buscar_pedido(pedido_id)
+        if pedido:
+            self.reputacion -= 4
+            self.inventario.quitar_pedido(pedido_id)
+            
+            if self.reputacion < 20:
+                self.estado = "Derrota"
+            
+            return True
+        
+        return False 
 
     def actualizar_resistencia(self, delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima):
         self.resistencia_obj.actualizar(delta_time, esta_moviendo, peso_total, condicion_clima, intensidad_clima)

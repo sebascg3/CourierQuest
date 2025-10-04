@@ -9,6 +9,7 @@ class Pedido:
         self.prioridad = prioridad  
         self.coord_recoger = coord_recoger 
         self.coord_entregar = coord_entregar  
+        self.tiempo_expiracion = 0.0
 
 
 

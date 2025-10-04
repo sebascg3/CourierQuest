@@ -40,6 +40,8 @@ mapa = tiles
 ROWS = len(mapa)
 COLS = len(mapa[0])
 
+TIEMPO_PARA_RECOGER = 30
+
 SURFACE_WEIGHTS = {
     "C": 1.0,   # Calle / camino
     "P": 0.5,  # Parque (más lento)
@@ -819,14 +821,17 @@ class MapaWindow(arcade.Window):
         if self.mostrar_pedido and self.pedido_actual:
             if key == arcade.key.A: 
                 pedido = self.pedido_actual
+                #
                 print(f"Pedido {pedido.id} aceptado")
                 self.pedidos_activos[pedido.id] = pedido 
+                pedido.tiempo_expiracion = self.tiempo_global + TIEMPO_PARA_RECOGER
                 pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
                 dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
                 self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
                 self.mostrar_pedido = False
                 self.pedido_actual = None
             elif key == arcade.key.R:  
+                #
                 print(f"Pedido {self.pedido_actual.id} rechazado")
                 self.mostrar_pedido = False
                 self.pedido_actual = None
@@ -1037,6 +1042,25 @@ class MapaWindow(arcade.Window):
                     self.pedido_activo_para_entrega = None
                     dropoff.remove_from_sprite_lists()
         self.tiempo_global += delta_time
+        
+        pedidos_expirados = []
+        for pedido_id, pedido in self.pedidos_activos.items():
+            if self.tiempo_global > pedido.tiempo_expiracion:
+                print(f"¡El pedido {pedido.id} ha expirado!")
+                self.player_sprite.reputacion -= 6
+                self.agregar_notificacion(f"Pedido Expirado: -6 Rep.", arcade.color.RED)
+                
+                pedidos_expirados.append(pedido_id)
+        for pedido_id in pedidos_expirados:
+            del self.pedidos_activos[pedido_id]
+            for sprite in self.pickup_list:
+                if sprite.pedido_id == pedido_id:
+                    sprite.remove_from_sprite_lists()
+            for sprite in self.dropoff_list:
+                if sprite.pedido_id == pedido_id:
+                    sprite.remove_from_sprite_lists()
+
+
         if not self.mostrar_pedido and self.pedidos_pendientes:
             if self.tiempo_global - self.tiempo_ultimo_popup >= self.intervalo_popup:
                 self.pedido_actual = self.pedidos_pendientes.pop(0)

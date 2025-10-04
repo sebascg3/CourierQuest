@@ -28,10 +28,9 @@ class Repartidor(arcade.Sprite):
         self.inventario.agregar_pedido(pedido)
         self.peso_total += pedido.peso
 
-    def pickup(self, pedido: Pedido, tiempo: datetime = None):
-        tiempo = tiempo or datetime.now() 
+    def pickup(self, pedido: Pedido, tiempo_actual_contador: float):
         if self.inventario.agregar_pedido(pedido):
-            pedido.tiempo_recogido = tiempo
+            pedido.tiempo_recogido_contador = tiempo_actual_contador
             return True
         return False
 
@@ -64,8 +63,8 @@ class Repartidor(arcade.Sprite):
             mensajes_feedback.append( (f"Entrega Tardía: {int(penalizacion)} Rep.", azul) )
 
         else:  
-            tiempo_total_asignado = (15 * 60) - pedido.deadline_contador 
-            tiempo_usado = (15 * 60) - tiempo_entrega_contador 
+            tiempo_total_asignado = pedido.tiempo_recogido_contador - pedido.deadline_contador
+            tiempo_usado = pedido.tiempo_recogido_contador - tiempo_entrega_contador 
             
             bonificacion = 0
             if tiempo_usado <= tiempo_total_asignado * 0.8:

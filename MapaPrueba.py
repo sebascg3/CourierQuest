@@ -1018,7 +1018,7 @@ class MapaWindow(arcade.Window):
         if pickups_hit:
             for pickup in pickups_hit:
                 pedido_obj = self.pedidos_dict[pickup.pedido_id]
-                if self.player_sprite.pickup(pedido_obj, datetime.now(timezone.utc)):
+                if self.player_sprite.pickup(pedido_obj, self.total_time):
                     self.agregar_notificacion(f"Recogido: {pedido_obj.id}", arcade.color.WHITE_SMOKE)
                     pickup.remove_from_sprite_lists()
                 else:

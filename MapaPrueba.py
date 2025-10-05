@@ -450,7 +450,7 @@ class MapaWindow(arcade.Window):
 
     def __init__(self):
         self.hora_inicio_juego_utc = datetime.now(timezone.utc)
-        self.meta_ingresos = 1100 
+        self.meta_ingresos = 1500 
         self.meta_cumplida = False
         self.mostrar_meta_popup = True
         self.mostrar_inventario_popup = False

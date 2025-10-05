@@ -5,8 +5,7 @@ con el framework de Arcade.
 """
 
 import arcade
-from MapaPrueba import MapaWindow  # Importa la ventana principal del juego
-
+from Juego import MapaWindow  # Importa la ventana principal del juego
 
 def main():
     """

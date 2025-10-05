@@ -1056,6 +1056,8 @@ class MapaWindow(arcade.Window):
                 print(f"Pedido {pedido.id} aceptado")
                 self.pedidos_activos[pedido.id] = pedido 
                 pedido.tiempo_expiracion = self.tiempo_global + TIEMPO_PARA_RECOGER
+                
+                # Mantener pickups y dropoffs en su posición original
                 pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
                 dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
                 self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
@@ -1109,6 +1111,37 @@ class MapaWindow(arcade.Window):
         x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
         y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
         return x, y
+    
+    def pixeles_a_celda(self, x, y):
+        """Convierte coordenadas de píxeles a coordenadas de celda"""
+        col = int(x / self.scale_x / CELL_SIZE)
+        row = int((height * CELL_SIZE - y / self.scale_y) / CELL_SIZE)
+        return row, col
+    
+    def encontrar_celda_accesible_mas_cercana(self, row, col):
+        """
+        Encuentra la celda accesible (no edificio) más cercana a las coordenadas dadas.
+        Si la celda original no es un edificio, devuelve las coordenadas originales.
+        """
+        if 0 <= row < ROWS and 0 <= col < COLS and mapa[row][col] != "B":
+            return row, col
+        
+        max_radio = max(ROWS, COLS)
+        
+        for radio in range(1, max_radio):
+            for dr in range(-radio, radio + 1):
+                for dc in range(-radio, radio + 1):
+                    if abs(dr) == radio or abs(dc) == radio:
+                        nueva_row = row + dr
+                        nueva_col = col + dc
+                        
+                        if (0 <= nueva_row < ROWS and 
+                            0 <= nueva_col < COLS and 
+                            mapa[nueva_row][nueva_col] != "B"):
+                            return nueva_row, nueva_col
+        
+        return row, col
+    
     
     def crear_pedido(self, pickup_x, pickup_y, dropoff_x, dropoff_y, pedido_id):
         pickup_sprite = arcade.Sprite("assets/pickup.png", scale=0.8)
@@ -1250,8 +1283,20 @@ class MapaWindow(arcade.Window):
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
 
-        
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
+        
+        if not pickups_hit:
+            for pickup in self.pickup_list:
+                pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
+                
+                if (0 <= pickup_row < ROWS and 0 <= pickup_col < COLS and 
+                    mapa[pickup_row][pickup_col] == "B"):
+                    
+                    celda_accesible_row, celda_accesible_col = self.encontrar_celda_accesible_mas_cercana(pickup_row, pickup_col)
+                    
+                    if (self.player_sprite.row == celda_accesible_row and 
+                        self.player_sprite.col == celda_accesible_col):
+                        pickups_hit.append(pickup)
         
         if pickups_hit:
             for pickup in pickups_hit:
@@ -1266,6 +1311,22 @@ class MapaWindow(arcade.Window):
                     self.agregar_notificacion("¡Inventario Lleno!", arcade.color.RED)
         else:
             dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
+            
+            if not dropoffs_hit and self.pedido_activo_para_entrega:
+                for dropoff in self.dropoff_list:
+                    if dropoff.pedido_id == self.pedido_activo_para_entrega.id:
+                        dropoff_row, dropoff_col = self.pixeles_a_celda(dropoff.center_x, dropoff.center_y)
+                        
+                        if (0 <= dropoff_row < ROWS and 0 <= dropoff_col < COLS and 
+                            mapa[dropoff_row][dropoff_col] == "B"):
+                            
+                            celda_accesible_row, celda_accesible_col = self.encontrar_celda_accesible_mas_cercana(dropoff_row, dropoff_col)
+                            
+                            if (self.player_sprite.row == celda_accesible_row and 
+                                self.player_sprite.col == celda_accesible_col):
+                                dropoffs_hit.append(dropoff)
+                                break
+            
             for dropoff in dropoffs_hit:
                 if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
                     

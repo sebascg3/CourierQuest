@@ -1127,7 +1127,7 @@ class MapaWindow(arcade.Window):
         self.tiempo_global += delta_time
         
         if self.check_game_end():
-    # Si terminó, no actualizar más (pausa el juego)
+
             return
 
         pedidos_expirados = []
@@ -1146,14 +1146,27 @@ class MapaWindow(arcade.Window):
             for sprite in self.dropoff_list:
                 if sprite.pedido_id == pedido_id:
                     sprite.remove_from_sprite_lists()
-#logica para los pop ups de pedidos 
-        if not self.mostrar_pedido and self.pedidos_pendientes:
+        #logica para enciclar
+        if not self.mostrar_pedido:
+            
+            pedido_encontrado_para_mostrar = None
             for pedido in self.pedidos_pendientes:
                 if self.tiempo_global >= pedido.release_time:
-                    self.pedido_actual = pedido
-                    self.mostrar_pedido = True
-                    self.pedidos_pendientes.remove(pedido)
-                    break
+                    pedido_encontrado_para_mostrar = pedido
+                    break 
+            if pedido_encontrado_para_mostrar:
+                self.pedido_actual = pedido_encontrado_para_mostrar
+                self.mostrar_pedido = True
+                self.pedidos_pendientes.remove(pedido_encontrado_para_mostrar)
+            elif not self.pedidos_pendientes:
+                #
+                print("enciclando pedidos")
+                pedidos_reciclados = list(self.pedidos_dict.values())
+                for i, pedido in enumerate(pedidos_reciclados):
+                    pedido.release_time = self.tiempo_global + ( (i + 1) * 30 )
+
+                random.shuffle(pedidos_reciclados)
+                self.pedidos_pendientes = pedidos_reciclados
 
 ###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
     def check_game_end(self):

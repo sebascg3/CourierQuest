@@ -860,7 +860,7 @@ class MapaWindow(arcade.Window):
             self.draw_inventario_popup()
             return
         if self.game_over:
-            self._draw_end_screen()
+            self._draw_end_screen("Game Over")
             return
 
     def restart_game(self):
@@ -893,7 +893,7 @@ class MapaWindow(arcade.Window):
         # Alternativa: self.on_draw()  # Pero evita llamadas recursivas; usa el loop de Arcade
 
 
-    def on_key_press(self, key):
+    def on_key_press(self, key, modifiers):
         if self.mostrar_meta_popup and key == arcade.key.ENTER:
             self.mostrar_meta_popup = False
             return
@@ -1301,7 +1301,7 @@ class MapaWindow(arcade.Window):
             self.guardar_puntaje_si_termina()  # Guarda el puntaje
             return True
     # Derrota: si tiempo <= 0
-        if self.total_time <= 0:
+        if self.total_time <= 0 or self.player_sprite.reputacion < 20:
             self.victoria = False
             self.game_over = True
             self.end_message = "¡Derrota! Se acabó el tiempo sin alcanzar la meta."

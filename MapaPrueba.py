@@ -413,6 +413,10 @@ class MapaWindow(arcade.Window):
         self.mostrar_pedido = False
         self.tiempo_ultimo_popup = 0
         self.tiempo_global = 0  
+        # Inicialización para lógica de fin de juego
+        self.game_over = False
+        self.victoria = False
+        self.pedidos_completados = 0  # Contador de pedidos entregados exitosamente
 
         # Estado de transición de clima
         self.transicion_clima = {'activa': False}
@@ -730,6 +734,31 @@ class MapaWindow(arcade.Window):
         if self.mostrar_inventario_popup:
             self.draw_inventario_popup()
             return
+        if self.game_over:
+            self.show_end_screen("")  
+            return
+
+    def restart_game(self):
+        """Reinicia el juego a estado inicial."""
+    # Resetea atributos clave (ajusta según necesites)
+        self.total_time = 15 * 60
+        self.player_sprite.ingresos = 0
+        self.player_sprite.reputacion = 1
+        self.player_sprite.inventario.vaciar()  # Asume que Inventario tiene vaciar()
+        self.pedidos_completados = 0
+        self.meta_cumplida = False
+        self.game_over = False
+        self.victoria = False
+        self.pickup_list = arcade.SpriteList()
+        self.dropoff_list = arcade.SpriteList()
+        self.pedidos_activos = {}
+        self.pedido_actual = None
+        self.mostrar_pedido = False
+    # Reinicia posición del jugador, clima, etc. (agrega más si es necesario)
+        self.player_sprite.center_x = self.target_x  # Posición inicial
+        self.player_sprite.center_y = self.target_y
+        print("Juego reiniciado.")
+
 
 
     def on_key_press(self, key, modifiers):
@@ -737,6 +766,16 @@ class MapaWindow(arcade.Window):
         if self.mostrar_meta_popup and key == arcade.key.ENTER:
             self.mostrar_meta_popup = False
             return
+        # Al inicio de on_key_press, después de las verificaciones de popups (como if self.mostrar_meta_popup...)
+        if self.game_over:
+            if key == arcade.key.SPACE or key == arcade.key.ESCAPE:
+        # Cerrar y salir
+                self.close()
+            elif key == arcade.key.R:
+        # Reiniciar juego (opcional: resetea atributos clave)
+                self.restart_game()
+            return  # No procesar más keys si game_over
+
         if getattr(self, 'mostrar_popup_puntajes', False):
             # No hacer nada mientras el popup está abierto
             return
@@ -1080,11 +1119,17 @@ class MapaWindow(arcade.Window):
                     if mensajes:
                         for texto, color in mensajes:
                             self.agregar_notificacion(texto, color)
-                    
+                        self.pedidos_completados += 1
+                        if self.player_sprite.ingresos >= self.meta_ingresos and not self.meta_cumplida:
+                            self.meta_cumplida = True
                     self.pedido_activo_para_entrega = None
                     dropoff.remove_from_sprite_lists()
         self.tiempo_global += delta_time
         
+        if self.check_game_end():
+    # Si terminó, no actualizar más (pausa el juego)
+            return
+
         pedidos_expirados = []
         for pedido_id, pedido in self.pedidos_activos.items():
             if self.tiempo_global > pedido.tiempo_expiracion:
@@ -1111,6 +1156,32 @@ class MapaWindow(arcade.Window):
                     break
 
 ###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
+    def check_game_end(self):
+        """Verifica si el juego terminó por victoria o derrota."""
+        if self.game_over:
+            return  # Ya terminó
+
+    # Victoria: si ingresos >= meta y no se ha cumplido antes
+        if self.player_sprite.ingresos >= self.meta_ingresos and not self.meta_cumplida:
+            self.meta_cumplida = True
+            self.victoria = True
+            self.game_over = True
+            self.show_end_screen("¡Victoria! Has alcanzado la meta de ingresos.")
+            self.guardar_puntaje_si_termina()  # Guarda el puntaje
+            return True
+
+    # Derrota: si tiempo <= 0
+        if self.total_time <= 0:
+            self.victoria = False
+            self.game_over = True
+            self.show_end_screen("¡Derrota! Se acabó el tiempo sin alcanzar la meta.")
+            self.guardar_puntaje_si_termina()  # Guarda el puntaje
+            return True
+
+        return False
+
+
+    
        
     def obtener_multiplicador_superficie(self, row, col):
         """Devuelve el multiplicador de velocidad según la superficie de la celda."""
@@ -1119,6 +1190,44 @@ class MapaWindow(arcade.Window):
             return SURFACE_WEIGHTS.get(tipo, 1.0)
         return 1.0
 
+    def show_end_screen(self, mensaje):
+        """Muestra el popup de fin de juego con mensaje y estadísticas."""
+    # Pausa el juego (detiene actualizaciones en on_update)
+        self.game_over = True
+    # Obtener estadísticas
+        ingresos = self.player_sprite.ingresos
+        reputacion = self.player_sprite.reputacion
+        tiempo_restante = max(0, int(self.total_time))
+        pedidos = self.pedidos_completados
+    # Color según victoria o derrota
+        color_fondo = arcade.color.DARK_GREEN if self.victoria else arcade.color.DARK_RED
+        color_texto = arcade.color.WHITE
+        color_titulo = arcade.color.YELLOW if self.victoria else arcade.color.ORANGE_RED
+    # Dibujar popup (se llamará desde on_draw)
+        ancho, alto = 500, 400
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+    # Fondo semi-transparente
+        arcade.draw_lrtb_rectangle_filled(0, self.window_width, 0, self.window_height, arcade.color.BLACK, 150)
+    # Rectángulo del popup
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, color_fondo)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+    # Título y mensaje
+        arcade.draw_text("FIN DEL JUEGO", x + ancho // 2, y + alto - 40, color_titulo, 24, anchor_x="center", anchor_y="top")
+        arcade.draw_text(mensaje, x + ancho // 2, y + alto - 80, color_texto, 18, anchor_x="center", anchor_y="top", width=ancho - 40)
+    # Estadísticas
+        y_offset = y + alto - 120
+        stats = [
+            f"Ingresos: ${ingresos:.2f}",
+            f"Reputación: {reputacion}",
+            f"Pedidos Completados: {pedidos}",
+            f"Tiempo Restante: {tiempo_restante // 60:02d}:{tiempo_restante % 60:02d}"
+        ]
+        for stat in stats:
+            arcade.draw_text(stat, x + ancho // 2, y_offset, color_texto, 16, anchor_x="center", anchor_y="top")
+            y_offset -= 25
+    # Instrucciones
+        arcade.draw_text("Presiona [ESPACIO] para cerrar o [R] para reiniciar", x + ancho // 2, y + 30, arcade.color.LIGHT_GRAY, 14, anchor_x="center", anchor_y="top")
 
 
 if __name__ == "__main__":

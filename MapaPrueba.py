@@ -1,6 +1,7 @@
 import requests
 import arcade
 import random
+import pyglet
 from datetime import datetime
 from Pedido import Pedido
 from Repartidor import Repartidor
@@ -464,7 +465,10 @@ class MapaWindow(arcade.Window):
         self.window_width = 800
         self.window_height = 600
         self.hud_height = 100
-        super().__init__(self.window_width, self.window_height, "Courier Quest")
+        icon1 = pyglet.image.load("assets/repartidor.png")
+        icon2 = pyglet.image.load("assets/repartidor.png")
+        super().__init__(self.window_width, self.window_height, "Courier Quest",fixed_frame_cap=60, )
+        self.set_icon(icon1, icon2) 
         self.pedir_nombre_popup()
         arcade.set_background_color(arcade.color.WHITE)
         # Estado popup cargar

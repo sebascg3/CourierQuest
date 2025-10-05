@@ -1,18 +1,24 @@
-from MapaPrueba import MapaWindow
-from Repartidor import Repartidor
+"""
+main.py - Archivo principal para correr Courier Quest.
+Vincula MapaWindow (que integra Repartidor y toda la lógica del juego)
+con el framework de Arcade.
+"""
+
 import arcade
+from MapaPrueba import MapaWindow  # Importa la ventana principal del juego
+# Nota: Repartidor se usa internamente en MapaWindow, no necesita import extra aquí
 
-class Juego(arcade.Window):
-    def __init__(self):
-        super().__init__(800, 600, "Courier Quest")
-        self.mapa = MapaWindow()
-        self.repartidor = Repartidor("assets/Repartidor2.png")
-
-        def on_draw(self):
-            arcade.start_render()
-            self.mapa.draw()
-            self.repartidor.draw()
+def main():
+    """Función principal para inicializar y correr el juego."""
+    # Crea e inicia la ventana del juego
+    window = MapaWindow()
+    
+    # Configuraciones globales opcionales (e.g., FPS, tema)
+    arcade.enable_timings(60)  # Limita a 60 FPS para performance
+    arcade.set_background_color(arcade.color.WHITE)  # Fondo por defecto (se sobreescribe en MapaWindow)
+    
+    # Corre el loop principal de Arcade
+    arcade.run()
 
 if __name__ == "__main__":
-    juego = Juego()
-    arcade.run()
+    main()

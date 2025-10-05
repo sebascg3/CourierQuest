@@ -117,20 +117,39 @@ class MapaWindow(arcade.Window):
     def draw_popup_cargar(self):
         if not getattr(self, 'popup_cargar_activo', False):
             return
-        ancho, alto = 520, 140
+
+        ancho, alto = 400, 220
         x = self.window_width // 2 - ancho // 2
         y = self.window_height // 2 - alto // 2
+
         arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
         arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
-        texto = "¿Cuál espacio deseas cargar?\nSelecciona 1, 2 o 3"
-        arcade.draw_text(texto, x + 20, y + alto - 25, arcade.color.WHITE, 18, anchor_x = "left",
-                          anchor_y = "top", multiline = True, width=ancho-40)
-        if self.slot_cargar_seleccionado is not None:
-            arcade.draw_text(f"Seleccionado: Slot {self.slot_cargar_seleccionado}",
-                              x + 20, y + 20, arcade.color.YELLOW, 14)
-        else:
-            arcade.draw_text("Presiona ESC para cancelar",
-                              x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+        
+        arcade.draw_text("Cargar Partida",
+                         x + ancho / 2, y + alto - 45,
+                         arcade.color.GOLD, 22, bold=True, anchor_x="center")
+
+        arcade.draw_text("¿Qué slot deseas cargar?",
+                         x + ancho / 2, y + alto - 90,
+                         arcade.color.WHITE, 16, anchor_x="center")
+
+        slot_button_width = 80
+        slot_button_height = 50
+        
+        start_x_buttons = x + ancho / 2 - (slot_button_width * 1.5 + 20)
+
+        for i in range(1, 4): 
+            button_x = start_x_buttons + (i - 1) * (slot_button_width + 20)
+            button_y = y + 70 
+            arcade.draw_lbwh_rectangle_filled(button_x, button_y, slot_button_width, slot_button_height, arcade.color.DARK_BLUE)
+            arcade.draw_lbwh_rectangle_outline(button_x, button_y, slot_button_width, slot_button_height, arcade.color.LIGHT_GRAY, 2)
+            arcade.draw_text(str(i),
+                             button_x + slot_button_width / 2, button_y + slot_button_height / 2,
+                             arcade.color.WHITE, 20, bold=True, anchor_x="center", anchor_y="center")
+
+        arcade.draw_text("Presiona [1], [2], [3] o [ESC] para cancelar",
+                         x + ancho / 2, y + 25,
+                         arcade.color.LIGHT_GRAY, 12, anchor_x="center")
 
     def cargar_de_slot(self, slot:int):
         """Placeholder de carga real. Aquí se implementaría la lógica de restaurar el estado."""
@@ -169,17 +188,43 @@ class MapaWindow(arcade.Window):
     def draw_popup_guardar(self):
         if not getattr(self, 'popup_guardar_activo', False):
             return
-        ancho, alto = 520, 140
+
+        ancho, alto = 400, 220
         x = self.window_width // 2 - ancho // 2
         y = self.window_height // 2 - alto // 2
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_BLUE_GRAY)
         arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
-        texto = "En cual slot deseas guardar la partida?\nSelecciona 1, 2 o 3"
-        arcade.draw_text(texto, x + 20, y + alto - 25, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top", multiline=True, width=ancho-40)
-        if self.slot_seleccionado is not None:
-            arcade.draw_text(f"Seleccionado: Slot {self.slot_seleccionado}", x + 20, y + 20, arcade.color.YELLOW, 14)
-        else:
-            arcade.draw_text("Presiona ESC para cancelar", x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+        
+        arcade.draw_text("Guardar Partida",
+                         x + ancho / 2, y + alto - 45,
+                         arcade.color.GOLD, 22, bold=True, anchor_x="center")
+
+        arcade.draw_text("¿En qué slot deseas guardar?",
+                         x + ancho / 2, y + alto - 90,
+                         arcade.color.WHITE, 16, anchor_x="center")
+
+        slot_button_width = 80
+        slot_button_height = 50
+        
+        
+        start_x_buttons = x + ancho / 2 - (slot_button_width * 1.5 + 20) 
+
+        for i in range(1, 4): 
+            button_x = start_x_buttons + (i - 1) * (slot_button_width + 20)
+            button_y = y + 70 
+            button_color = arcade.color.BLUE_BELL if self.slot_seleccionado == i else arcade.color.DARK_BLUE
+            outline_color = arcade.color.YELLOW if self.slot_seleccionado == i else arcade.color.LIGHT_GRAY
+            
+            arcade.draw_lbwh_rectangle_filled(button_x, button_y, slot_button_width, slot_button_height, button_color)
+            arcade.draw_lbwh_rectangle_outline(button_x, button_y, slot_button_width, slot_button_height, outline_color, 2)
+            
+            arcade.draw_text(str(i), 
+                             button_x + slot_button_width / 2, button_y + slot_button_height / 2,
+                             arcade.color.WHITE, 20, bold=True, anchor_x="center", anchor_y="center")
+
+        arcade.draw_text("Presiona [ESC] para cancelar",
+                         x + ancho / 2, y + 25,
+                         arcade.color.LIGHT_GRAY, 12, anchor_x="center")
     
     def guardar_en_slot(self, slot:int):
         """Guarda el estado actual del juego en binario usando pickle."""
@@ -196,7 +241,6 @@ class MapaWindow(arcade.Window):
                 'nombre': getattr(self.player_sprite, 'nombre', ''),
                 'ingresos': getattr(self.player_sprite, 'ingresos', 0),
                 'reputacion': getattr(self.player_sprite, 'reputacion', 1),
-                'peso_total': getattr(self.player_sprite, 'peso_total', 0),
                 # Inventario: lista de IDs de pedidos
                 'inventario': [nodo.pedido.id for nodo in self._iterar_inventario()],
             },
@@ -253,7 +297,6 @@ class MapaWindow(arcade.Window):
         self.player_sprite.nombre = player.get('nombre', getattr(self.player_sprite, 'nombre', ''))
         self.player_sprite.ingresos = player.get('ingresos', getattr(self.player_sprite, 'ingresos', 0))
         self.player_sprite.reputacion = player.get('reputacion', getattr(self.player_sprite, 'reputacion', 1))
-        self.player_sprite.peso_total = player.get('peso_total', getattr(self.player_sprite, 'peso_total', 0))
         # Inventario: reconstruir desde IDs
         self._restaurar_inventario(player.get('inventario', []))
         clima = estado.get('clima', {})
@@ -289,45 +332,81 @@ class MapaWindow(arcade.Window):
         """Reconstruye el inventario del jugador desde una lista de IDs."""
         inv = self.player_sprite.inventario
         inv.inicio = None
-        inv.peso_total = 0
+        inv._peso_total = 0
         for pid in lista_ids:
             pedido = self.pedidos_dict.get(pid)
             if pedido:
                 inv.agregar_pedido(pedido)
+
     def draw_popup_puntajes(self):
-        ancho, alto = 400, 350
+        ancho, alto = 500, 400
         x = self.window_width // 2 - ancho // 2
         y = self.window_height // 2 - alto // 2
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_GREEN)
-        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
-        arcade.draw_text("Marcadores",
-                          x + 20, y + alto - 30, arcade.color.WHITE, 20, anchor_x="left", anchor_y="top")
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.GOLD, 3)
+
+        arcade.draw_text("🏆 Marcadores 🏆",
+                         x + ancho / 2, y + alto - 45,
+                         arcade.color.GOLD, 24, bold=True, anchor_x="center")
+        header_y = y + alto - 90
+        arcade.draw_text("#", x + 50, header_y, arcade.color.WHITE, 16, bold=True, anchor_x="center")
+        arcade.draw_text("Nombre", x + ancho / 2, header_y, arcade.color.WHITE, 16, bold=True, anchor_x="center")
+        arcade.draw_text("Puntaje", x + ancho - 90, header_y, arcade.color.WHITE, 16, bold=True, anchor_x="center")
+        
+        arcade.draw_line(x + 30, header_y - 15, x + ancho - 30, header_y - 15, arcade.color.WHITE, 1)
+
         if hasattr(self, 'popup_puntajes') and self.popup_puntajes:
             for i, p in enumerate(self.popup_puntajes[:10]):
                 nombre = p['nombre']
                 score = p['score']
-                arcade.draw_text(f"{i+1}. {nombre}: {score}", x + 30, y + alto - 60 - i*28, arcade.color.YELLOW, 16, anchor_x="left", anchor_y="top")
+                color_fila = arcade.color.GOLD if i == 0 else arcade.color.WHITE
+                fila_y = header_y - 45 - i * 28
+
+                arcade.draw_text(f"{i+1}.", x + 50, fila_y, color_fila, 16, anchor_x="center")
+                arcade.draw_text(nombre, x + ancho / 2, fila_y, color_fila, 16, anchor_x="center")
+                arcade.draw_text(f"{score:,}", x + ancho - 50, fila_y, color_fila, 16, anchor_x="right")
         else:
             arcade.draw_text("No hay puntajes guardados.",
-                              x + 30, y + alto - 60, arcade.color.LIGHT_GRAY, 16, anchor_x="left", anchor_y="top")
-        arcade.draw_text("Presiona ESC para cerrar",
-                          x + 20, y + 20, arcade.color.LIGHT_GRAY, 12)
+                             x + ancho / 2, y + alto / 2,
+                             arcade.color.LIGHT_GRAY, 16, anchor_x="center")
+        arcade.draw_text("Presiona [ESC] para cerrar",
+                         x + ancho / 2, y + 25,
+                         arcade.color.LIGHT_GRAY, 12, anchor_x="center")
+        
+        
     def pedir_nombre_popup(self):
         self.nombre_popup_activo = True
         self.nombre_jugador = ""
 
     def draw_nombre_popup(self):
-        ancho, alto = 350, 120
+        ancho, alto = 450, 180
         x = self.window_width // 2 - ancho // 2
         y = self.window_height // 2 - alto // 2
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_BLUE)
+
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
         arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
-        arcade.draw_text("Ingresa tu nombre de jugador:",
-                          x + 20, y + alto - 30, arcade.color.WHITE, 18, anchor_x="left", anchor_y="top")
-        arcade.draw_text(self.nombre_jugador + "_",
-                          x + 20, y + alto - 65, arcade.color.WHITE, 16, anchor_x="left", anchor_y="top")
-        arcade.draw_text("Presiona Enter para continuar y suerte!",
-                          x + 20, y + 15, arcade.color.LIGHT_GRAY, 12)
+        
+        arcade.draw_text("Ingresa tu nombre",
+                         x + ancho / 2, y + alto - 40,
+                         arcade.color.WHITE, 20, bold=True, anchor_x="center")
+
+        input_box_x = x + 40
+        input_box_y = y + alto - 95
+        input_box_w = ancho - 80
+        input_box_h = 40
+        arcade.draw_lbwh_rectangle_filled(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.BLACK)
+        arcade.draw_lbwh_rectangle_outline(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.WHITE, 1)
+
+        cursor = "|" if math.sin(self.tiempo_global * 10) > 0 else " "
+        
+        texto_a_mostrar = self.nombre_jugador + cursor
+        arcade.draw_text(texto_a_mostrar,
+                 input_box_x + 10, input_box_y + input_box_h // 2, 
+                 arcade.color.WHITE, 18, anchor_x="left", anchor_y="center") 
+        arcade.draw_text("Presiona [Enter] para continuar",
+                         x + ancho / 2, y + 25,
+                         arcade.color.LIGHT_GREEN, 14, anchor_x="center")
+        
 
     def guardar_puntaje_si_termina(self):
         """
@@ -595,52 +674,95 @@ class MapaWindow(arcade.Window):
 
 
     def draw_popup_pedido(self):
-        """Dibuja el popup centrado en el área del mapa (evita superposición con HUD)."""
+        """Dibuja un popup de nuevo pedido mejorado, con más información y mejor diseño."""
         if self.mostrar_pedido and self.pedido_actual:
-            ancho, alto = 400, 150
+            ancho, alto = 450, 200
             x = self.window_width // 2 - ancho // 2
             y = (self.window_height - self.hud_height) // 2 - alto // 2
-            arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.BLACK)
-            arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 2)
-            info_text = f"Nuevo pedido: {self.pedido_actual.id}\nPeso: {self.pedido_actual.peso}\nPago: ${self.pedido_actual.pago}"
-            arcade.draw_text(
-                info_text,
-                x + 20, y + alto - 20,
-                arcade.color.WHITE, 14,
-                anchor_x="left", anchor_y="top",
-                multiline=True, width=ancho - 40
-            )
-            arcade.draw_text(
-                "[A]ceptar   [R]echazar",
-                x + 120, y + 55,
-                arcade.color.WHITE, 14
-            )
+            
+            arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+            arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+            
+            arcade.draw_text(f"NUEVO PEDIDO: {self.pedido_actual.id}",
+                             x + ancho / 2, y + alto - 35,
+                             arcade.color.GOLD, 18, bold=True, anchor_x="center")
+
+            deadline_contador = self.pedido_actual.deadline_contador
+            minutos = int(deadline_contador) // 60
+            segundos = int(deadline_contador) % 60
+            deadline_texto = f"{minutos:02d}:{segundos:02d}"
+
+            info_y = y + alto - 80
+            arcade.draw_text(f"Peso:", x + 40, info_y, arcade.color.WHITE, 14)
+            arcade.draw_text(f"{self.pedido_actual.peso} kg", x + 150, info_y, arcade.color.LIGHT_GRAY, 14)
+            
+            arcade.draw_text(f"Pago:", x + 40, info_y - 25, arcade.color.WHITE, 14)
+            arcade.draw_text(f"${self.pedido_actual.pago:.2f}", x + 150, info_y - 25, arcade.color.GREEN_YELLOW, 14, bold=True)
+            
+            arcade.draw_text(f"Deadline:", x + 250, info_y, arcade.color.WHITE, 14)
+            arcade.draw_text(deadline_texto, x + 350, info_y, arcade.color.ORANGE_RED, 14, bold=True)
+            
+            arcade.draw_text(f"Prioridad:", x + 250, info_y - 25, arcade.color.WHITE, 14)
+            arcade.draw_text(f"{self.pedido_actual.prioridad}", x + 350, info_y - 25, arcade.color.LIGHT_GRAY, 14)
+
+            arcade.draw_lbwh_rectangle_filled(x + 50, y + 20, 150, 40, arcade.color.DARK_GREEN)
+            arcade.draw_text("[A] Aceptar", x + 125, y + 40, arcade.color.WHITE, 16, anchor_x="center")
+
+            arcade.draw_lbwh_rectangle_filled(x + ancho - 200, y + 20, 150, 40, arcade.color.DARK_RED)
+            arcade.draw_text("[R] Rechazar", x + ancho - 125, y + 40, arcade.color.WHITE, 16, anchor_x="center")
 
 
     def draw_popup_meta(self):
-        ancho, alto = 400, 200
+        ancho, alto = 600, 400
         x = self.width // 2 - ancho // 2
         y = self.height // 2 - alto // 2
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_BLUE_GRAY)
+        
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        
         arcade.draw_text(
-          "Meta de Ingresos del Juego",
-           x + ancho // 2, y + alto - 40,
-           arcade.color.WHITE, 18,
-           anchor_x="center", anchor_y="center"
-    )
+            "Bienvenido a Courier Quest",
+            x + ancho // 2, y + alto - 50,
+            arcade.color.WHITE, 22,
+            anchor_x="center", anchor_y="center", bold=True
+        )
+
         arcade.draw_text(
-           f"Debes alcanzar ${self.meta_ingresos}\nantes de que se acabe el tiempo.",
-           x + ancho // 2, y + alto // 2,
-           arcade.color.WHITE, 14,
-           anchor_x="center", anchor_y="center",
-           align="center", multiline=True, width=ancho-40
-    )
+            f"Tu meta es alcanzar ${self.meta_ingresos} antes de que se agote el tiempo.",
+            x + ancho // 2, y + alto - 90,
+            arcade.color.CYAN, 16,
+            anchor_x="center", anchor_y="center"
+        )
+        
         arcade.draw_text(
-           "Presiona [Enter] para empezar",
-           x + ancho // 2, y + 30,
-           arcade.color.LIGHT_GREEN, 14,
-           anchor_x="center", anchor_y="center"
-    )
+            "Reglas Principales",
+            x + ancho // 2, y + alto - 140,
+            arcade.color.WHITE, 16,
+            anchor_x="center", anchor_y="center", bold=True
+        )
+
+        reglas_text = (
+            "- La Reputación es clave: entrégala a tiempo para aumentarla.\n"
+            "- Las entregas tardías, expiraciones o cancelaciones la reducirán.\n"
+            "- ¡Cuidado! Si tu reputación baja de 20, pierdes la partida.\n"
+            "- Usa [I] para ver tu inventario y seleccionar pedidos.\n"
+            "- Usa [G] para guardar tu partida"
+        )
+        arcade.draw_text(
+            reglas_text,
+            x + ancho // 2, y + alto // 2 - 30,
+            arcade.color.WHITE, 14,
+            anchor_x="center", anchor_y="center",
+            align="center", multiline=True, width=ancho - 60
+        )
+        
+        arcade.draw_text(
+            "Presiona [Enter] para empezar",
+            x + ancho // 2, y + 40,
+            arcade.color.LIGHT_GREEN, 16,
+            anchor_x="center", anchor_y="center", bold=True
+        )
+
         
     def agregar_notificacion(self, texto, color=arcade.color.WHITE):
         notificacion = {

@@ -929,14 +929,30 @@ class MapaWindow(arcade.Window):
                 self._force_redraw()
             return  # No procesar más keys si game_over
 
-        if self.nombre_popup_activo:
+        elif self.nombre_popup_activo:
             if key == arcade.key.ENTER:
-                self.nombre_popup_activo = False
-                self.player_sprite.nombre = self.nombre_jugador if self.nombre_jugador else "Jugador"
+                if self.nombre_jugador.strip():
+                    self.nombre_popup_activo = False
+                    self.player_sprite.nombre = self.nombre_jugador.strip()
             elif key == arcade.key.BACKSPACE:
                 self.nombre_jugador = self.nombre_jugador[:-1]
             elif 32 <= key <= 126 and len(self.nombre_jugador) < 16:
                 self.nombre_jugador += chr(key)
+            return
+        elif self.popup_guardar_activo:
+            if key == arcade.key.ESCAPE:
+                self.popup_guardar_activo = False
+            elif key == arcade.key.KEY_1: self.guardar_en_slot(1)
+            elif key == arcade.key.KEY_2: self.guardar_en_slot(2)
+            elif key == arcade.key.KEY_3: self.guardar_en_slot(3)
+            return
+
+        elif self.popup_cargar_activo:
+            if key == arcade.key.ESCAPE:
+                self.popup_cargar_activo = False
+            elif key == arcade.key.KEY_1: self.cargar_de_slot(1)
+            elif key == arcade.key.KEY_2: self.cargar_de_slot(2)
+            elif key == arcade.key.KEY_3: self.cargar_de_slot(3)
             return
 
         if self.mostrar_inventario_popup:
@@ -1019,7 +1035,10 @@ class MapaWindow(arcade.Window):
         if key in (arcade.key.UP, arcade.key.DOWN, arcade.key.LEFT, arcade.key.RIGHT):
             self.active_direction = key
         self.try_move()
+
     def on_key_release(self, key, modifiers):
+        if self.nombre_popup_activo or self.popup_guardar_activo or self.popup_cargar_activo or self.mostrar_inventario_popup:
+            return
         # Cierra popup de puntajes con ESC
         if getattr(self, 'mostrar_popup_puntajes', False):
             if key == arcade.key.ESCAPE:

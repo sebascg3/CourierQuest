@@ -1270,22 +1270,22 @@ class MapaWindow(arcade.Window):
                     sprite.remove_from_sprite_lists()
         #logica para enciclar
         if not self.mostrar_pedido:
-            
             pedido_encontrado_para_mostrar = None
             for pedido in self.pedidos_pendientes:
                 if self.tiempo_global >= pedido.release_time:
                     pedido_encontrado_para_mostrar = pedido
                     break 
+
             if pedido_encontrado_para_mostrar:
                 self.pedido_actual = pedido_encontrado_para_mostrar
                 self.mostrar_pedido = True
                 self.pedidos_pendientes.remove(pedido_encontrado_para_mostrar)
             elif not self.pedidos_pendientes:
-                #
-                print("enciclando pedidos")
                 pedidos_reciclados = list(self.pedidos_dict.values())
                 for i, pedido in enumerate(pedidos_reciclados):
                     pedido.release_time = self.tiempo_global + ( (i + 1) * 30 )
+                    nueva_duracion_segundos = random.randint(180, 300) 
+                    pedido.deadline_contador = self.total_time - nueva_duracion_segundos
 
                 random.shuffle(pedidos_reciclados)
                 self.pedidos_pendientes = pedidos_reciclados

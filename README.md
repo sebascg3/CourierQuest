@@ -47,6 +47,11 @@ Para cargar y ordenar los puntajes desde el json
 Es la representación más natural para una cuadrícula 2D, permitiendo un acceso directo a las propiedades de cualquier celda como terreno y obstáculos.
 * **Complejidad:**
     * **Acceso a una Celda (`mapa[fila][col]`):** $O(1)$.
+### 5. Pila (Stack) Implementada con Lista
+* **Uso:** Para el sistema de undo (self.undo_stack), que almacena snapshots serializados (con pickle) de estados del juego (posición, inventario, racha, tiempo, etc.). Permite agregar estados después de movimientos (append) y restaurar el anterior (pop), operando en LIFO (Last In, First Out) para retroceder pasos secuencialmente.
+*  **Complejidad:**
+   * Agregar Estado (append): O(1).
+   * Deshacer Paso (pop y restauración): O(1) para extracción; O(n) para reconstruir inventario (donde es el tamaño del inventario, típicamente pequeño <5).
 
 ## Complejidad Algorítmica (Big O)
 

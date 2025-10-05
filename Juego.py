@@ -245,6 +245,8 @@ class MapaWindow(arcade.Window):
                 'reputacion': getattr(self.player_sprite, 'reputacion', 1),
                 # Inventario: lista de IDs de pedidos
                 'inventario': [nodo.pedido.id for nodo in self._iterar_inventario()],
+                'racha_entregas': getattr(self.player_sprite, 'racha_entregas_sin_penalizacion', 0),
+                'primera_tardanza': getattr(self.player_sprite, 'primera_tardanza_del_dia_usada', False),
             },
             'clima': {
                 'condicion': self.clima.condicion,
@@ -300,6 +302,9 @@ class MapaWindow(arcade.Window):
         self.player_sprite.nombre = player.get('nombre', getattr(self.player_sprite, 'nombre', ''))
         self.player_sprite.ingresos = player.get('ingresos', getattr(self.player_sprite, 'ingresos', 0))
         self.player_sprite.reputacion = player.get('reputacion', getattr(self.player_sprite, 'reputacion', 1))
+        self.player_sprite.racha_entregas_sin_penalizacion = player.get('racha_entregas', 0)
+        self.player_sprite.primera_tardanza_del_dia_usada = player.get('primera_tardanza', False)
+
         # Inventario: reconstruir desde IDs
         self._restaurar_inventario(player.get('inventario', []))
         clima = estado.get('clima', {})
@@ -347,8 +352,6 @@ class MapaWindow(arcade.Window):
     def guardar_estado_actual(self):
         """Guarda un snapshot liviano del estado actual para undo.
         Similar a guardar_en_slot, pero sin sprites pesados."""
-        # Recomendado: mover este import al nivel de módulo para evitar importarlo repetidamente
-        
 
         estado = {
             'total_time': getattr(self, 'total_time', 0),
@@ -363,6 +366,8 @@ class MapaWindow(arcade.Window):
                 'ingresos': getattr(self.player_sprite, 'ingresos', 0),
                 'reputacion': getattr(self.player_sprite, 'reputacion', 1),
                 'inventario': [nodo.pedido.id for nodo in self._iterar_inventario()],
+                'racha_entregas': getattr(self.player_sprite, 'racha_entregas_sin_penalizacion', 0),
+                'primera_tardanza': getattr(self.player_sprite, 'primera_tardanza_del_dia_usada', False),
             },
             'clima': {
                 'condicion': self.clima.condicion,
@@ -421,6 +426,8 @@ class MapaWindow(arcade.Window):
             self.player_sprite.nombre = player.get('nombre', getattr(self.player_sprite, 'nombre', ''))
             self.player_sprite.ingresos = player.get('ingresos', getattr(self.player_sprite, 'ingresos', 0))
             self.player_sprite.reputacion = player.get('reputacion', getattr(self.player_sprite, 'reputacion', 1))
+            self.player_sprite.racha_entregas_sin_penalizacion = player.get('racha_entregas', 0)
+            self.player_sprite.primera_tardanza_del_dia_usada = player.get('primera_tardanza', False)
 
             # Restaurar inventario
             self._restaurar_inventario(player.get('inventario', []))

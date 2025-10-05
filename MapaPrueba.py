@@ -1208,7 +1208,7 @@ class MapaWindow(arcade.Window):
         x = self.window_width // 2 - ancho // 2
         y = self.window_height // 2 - alto // 2
     # Fondo semi-transparente
-        arcade.draw_lrtb_rectangle_filled(0, self.window_width, 0, self.window_height, arcade.color.BLACK, 150)
+        arcade.draw_lbwh_rectangle_filled(0, self.window_width, 0, self.window_height, arcade.color.BLACK, 150)
     # Rectángulo del popup
         arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, color_fondo)
         arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)

@@ -1397,7 +1397,7 @@ class MapaWindow(arcade.Window):
             arcade.draw_text(stat, x + ancho // 2, y_offset, color_texto, 16, anchor_x="center", anchor_y="top")
             y_offset -= 25
     # Instrucciones
-        arcade.draw_text("Presiona [ESPACIO] para cerrar o [R] para reiniciar", x + ancho // 2, y + 30, arcade.color.LIGHT_GRAY, 14, anchor_x="center", anchor_y="top")
+        arcade.draw_text("Presiona [ESC] para cerrar o [R] para reiniciar", x + ancho // 2, y + 30, arcade.color.LIGHT_GRAY, 14, anchor_x="center", anchor_y="top")
 
 
 if __name__ == "__main__":

@@ -2,10 +2,19 @@ import requests
 
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
 
+
 def main():
+    """
+    Consulta y muestra información de la API de CourierQuest:
+    - Estado de salud del backend.
+    - Mapa de la ciudad y su leyenda.
+    - Lista de trabajos/pedidos disponibles.
+    - Información y transición del clima.
+    Imprime los resultados en consola.
+    """
     # Health check
     health_data = requests.get(f"{BASE_URL}/healthz").json()
-    health = health_data.get("ok", False)   # devuelve True/False
+    health = health_data.get("ok", False)  # Devuelve True/False
 
     # City map
     city_data = requests.get(f"{BASE_URL}/city/map").json()
@@ -19,16 +28,16 @@ def main():
     goal = data.get("goal", {})
     max_time = data.get("max_time", 0)
 
-    # Legend details (desde city_data)
+    # Legend details
     street = legend.get("C", {})
     building = legend.get("B", {})
     parks = legend.get("P", {})
 
-    # Jobs (endpoint correcto)
+    # Jobs (pedidos)
     jobs_data = requests.get(f"{BASE_URL}/city/jobs").json()
     jobs = jobs_data.get("data", [])
 
-    # Weather (endpoint correcto)
+    # Weather (clima)
     weather_data = requests.get(f"{BASE_URL}/city/weather?city=TigerCity&mode=seed").json()
     weather_info = weather_data.get("data", {})
 
@@ -51,7 +60,10 @@ def main():
 
     print("\n💼 Jobs:")
     for job in jobs:
-        print(f"- {job['id']} | Pickup: {job['pickup']} -> Dropoff: {job['dropoff']} | Payout: {job['payout']} | Deadline: {job['deadline']}")
+        print(
+            f"- {job['id']} | Pickup: {job['pickup']} -> Dropoff: {job['dropoff']} | "
+            f"Payout: {job['payout']} | Deadline: {job['deadline']}"
+        )
 
     print("\n🌤 Weather:")
     print("Initial:", initial_weather)

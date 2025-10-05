@@ -3,8 +3,7 @@ import random
 class MarkovClima:
     def __init__(self, condiciones: list[str], matrizTransicion: list[list[float]]):
         """
-        :param condiciones: lista de condiciones climáticas (ej. ["clear", "clouds", "rain", "storm"])
-        :param matrizTransicion: matriz NxN con probabilidades (cada fila suma 1.0)
+        Inicializa el modelo de Markov con las condiciones y la matriz de transición.
         """
         self.condiciones = condiciones
         self.matriz = matrizTransicion

@@ -181,3 +181,15 @@ class Repartidor(arcade.Sprite):
         self.coordenada.y += coord.y
         self.center_x = self.coordenada.x * 30
         self.center_y = self.coordenada.y * 30
+
+    def pedidos_ids(self):
+        """
+        Retorna lista de IDs de pedidos en el inventario del repartidor.
+        """
+        ids = []
+        # Accede al inventario del repartidor y recorre la lista doblemente enlazada
+        nodo = self.inventario.inicio
+        while nodo:
+            ids.append(nodo.pedido.id)
+            nodo = nodo.siguiente
+        return ids

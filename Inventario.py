@@ -62,7 +62,7 @@ class Inventario:
                 return True
             actual = actual.siguiente
         return False
-
+    
     def buscar_pedido(self, pedido_id: str):
         """
         Busca un pedido por su ID.

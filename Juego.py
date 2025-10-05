@@ -11,6 +11,7 @@ from Resistencia import Resistencia
 import math
 from datetime import datetime, timezone
 import os, json
+import pickle
 
 CELL_SIZE = 50
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
@@ -269,6 +270,7 @@ class MapaWindow(arcade.Window):
         print(f"Guardado en {ruta}")
         self.slot_seleccionado = slot
         self.popup_guardar_activo = False
+        self.undo_stack.clear()
 
     def _iterar_inventario(self):
         """Itera sobre el inventario del jugador y retorna nodos."""
@@ -328,16 +330,157 @@ class MapaWindow(arcade.Window):
         print(f"Cargado desde {ruta}")
         self.slot_cargar_seleccionado = slot
         self.popup_cargar_activo = False
+        self.undo_stack.clear()  # Limpia undo al cargar (nuevo estado)
 
     def _restaurar_inventario(self, lista_ids):
         """Reconstruye el inventario del jugador desde una lista de IDs."""
         inv = self.player_sprite.inventario
         inv.inicio = None
-        inv._peso_total = 0
+        inv._peso_total = 0  # Asumiendo que _peso_total es el atributo interno; ajusta si es diferente
         for pid in lista_ids:
             pedido = self.pedidos_dict.get(pid)
             if pedido:
                 inv.agregar_pedido(pedido)
+        # Actualiza cantidad si es necesario (asumiendo que Inventario tiene _cantidad)
+        inv._cantidad = len(lista_ids)  # Opcional, si usas un atributo _cantidad
+
+    def guardar_estado_actual(self):
+        """Guarda un snapshot liviano del estado actual para undo.
+        Similar a guardar_en_slot, pero sin sprites pesados."""
+        # Recomendado: mover este import al nivel de módulo para evitar importarlo repetidamente
+        
+
+        estado = {
+            'total_time': getattr(self, 'total_time', 0),
+            'tiempo_global': getattr(self, 'tiempo_global', 0),
+            'player': {
+                'row': self.player_sprite.row,
+                'col': self.player_sprite.col,
+                'center_x': self.player_sprite.center_x,
+                'center_y': self.player_sprite.center_y,
+                'resistencia': self.player_sprite.get_resistencia_actual(),
+                'nombre': getattr(self.player_sprite, 'nombre', ''),
+                'ingresos': getattr(self.player_sprite, 'ingresos', 0),
+                'reputacion': getattr(self.player_sprite, 'reputacion', 1),
+                'inventario': [nodo.pedido.id for nodo in self._iterar_inventario()],
+            },
+            'clima': {
+                'condicion': self.clima.condicion,
+                'intensidad': self.clima.intensidad,
+                'tiempoRestante': self.clima.tiempoRestante,
+                'multiplicadorVelocidad': self.clima.multiplicadorVelocidad,
+            },
+            'pedidos_activos': list(self.pedidos_activos.keys()),
+            'pedidos_pendientes': [p.id for p in self.pedidos_pendientes],
+            'pedido_current': self.pedido_actual.id if self.pedido_actual else None,
+            'pedido_activo_entrega': self.pedido_activo_para_entrega.id if self.pedido_activo_para_entrega else None,
+            'pedidos_completados': self.pedidos_completados,
+            'meta_cumplida': self.meta_cumplida,
+            # No guardamos pickups/dropoffs completos (se recrean en restaurar)
+        }
+
+        # Serializar a bytes y apilar para undo
+        snapshot = pickle.dumps(estado, protocol=pickle.HIGHEST_PROTOCOL)
+
+        # Asegurar estructura de la pila de undo y el límite
+        if not hasattr(self, 'undo_stack') or self.undo_stack is None:
+            self.undo_stack = []
+        if not hasattr(self, 'undo_limit') or not isinstance(self.undo_limit, int) or self.undo_limit <= 0:
+            self.undo_limit = 20  # valor por defecto razonable
+
+        self.undo_stack.append(snapshot)
+
+        # Limitar a N elementos (elimina el más antiguo)
+        if len(self.undo_stack) > self.undo_limit:
+            self.undo_stack.pop(0)
+    
+    def deshacer_paso(self):
+        """Restaura el estado anterior desde el stack de undo.
+        Recrear pickups/dropoffs basados en pedidos."""
+        if not self.undo_stack:
+            self.agregar_notificacion("No hay pasos para deshacer.", arcade.color.BLACK_OLIVE)
+            return
+
+        try:
+            # Obtener y deserializar último estado
+            ultimo_snapshot = self.undo_stack.pop()
+            estado = pickle.loads(ultimo_snapshot)
+
+            # Restaurar atributos principales (similar a cargar_de_slot)
+            self.total_time = estado.get('total_time', self.total_time)
+            self.tiempo_global = estado.get('tiempo_global', self.tiempo_global)
+            self.pedidos_completados = estado.get('pedidos_completados', 0)
+            self.meta_cumplida = estado.get('meta_cumplida', False)
+        
+            player = estado.get('player', {})
+            self.player_sprite.row = player.get('row', self.player_sprite.row)
+            self.player_sprite.col = player.get('col', self.player_sprite.col)
+            self.player_sprite.center_x = player.get('center_x', self.player_sprite.center_x)
+            self.player_sprite.center_y = player.get('center_y', self.player_sprite.center_y)
+            self.player_sprite.resistencia_obj.set_resistencia(player.get('resistencia', 100))
+            self.player_sprite.nombre = player.get('nombre', getattr(self.player_sprite, 'nombre', ''))
+            self.player_sprite.ingresos = player.get('ingresos', getattr(self.player_sprite, 'ingresos', 0))
+            self.player_sprite.reputacion = player.get('reputacion', getattr(self.player_sprite, 'reputacion', 1))
+
+            # Restaurar inventario
+            self._restaurar_inventario(player.get('inventario', []))
+
+            # Restaurar clima
+            clima = estado.get('clima', {})
+            self.clima.condicion = clima.get('condicion', self.clima.condicion)
+            self.clima.intensidad = clima.get('intensidad', self.clima.intensidad)
+            self.clima.tiempoRestante = clima.get('tiempoRestante', self.clima.tiempoRestante)
+            self.clima.multiplicadorVelocidad = clima.get('multiplicadorVelocidad', self.clima.multiplicadorVelocidad)
+
+            # Restaurar pedidos
+            self.pedidos_activos = {pid: self.pedidos_dict[pid] for pid in estado.get('pedidos_activos', []) if pid in self.pedidos_dict}
+            self.pedidos_pendientes = [self.pedidos_dict[pid] for pid in estado.get('pedidos_pendientes', []) if pid in self.pedidos_dict]
+            pid_actual = estado.get('pedido_current', None)
+            self.pedido_actual = self.pedidos_dict.get(pid_actual)
+            pid_entrega = estado.get('pedido_activo_entrega', None)
+            self.pedido_activo_para_entrega = self.pedidos_dict.get(pid_entrega)
+
+            # Recrear pickups y dropoffs basados en pedidos activos
+            self._recrear_pickups_dropoffs()
+
+            # Detener movimiento actual
+            self.moving = False
+            self.active_direction = None
+
+            self.agregar_notificacion("Estado anterior restaurado.", arcade.color.CYAN)
+            print(f"[UNDO] Deshecho paso. Stack restante: {len(self.undo_stack)}")
+
+            # Re-chequear fin de juego después de undo
+            self.check_game_end()
+
+        except Exception as e:
+            print(f"[ERROR] Fallo en undo: {e}")
+            self.agregar_notificacion("Error al deshacer. Intenta de nuevo.", arcade.color.RED)
+            # Opcional: No pop el stack si falla, para reintentar
+            self.undo_stack.append(ultimo_snapshot)  # Re-agrega si falló
+
+    def _recrear_pickups_dropoffs(self):
+        """Recrea sprites de pickup/dropoff basados en pedidos activos/pendientes."""
+        self.pickup_list = arcade.SpriteList()
+        self.dropoff_list = arcade.SpriteList()
+    
+        # Para pedidos activos (pickups pendientes, si no en inventario)
+        for pedido in self.pedidos_activos.values():
+            if pedido.id not in self.player_sprite.pedidos_ids():  # Ya recogido? No recrear pickup
+                pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
+                dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
+                self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
+    
+        # Para pedidos en inventario (solo dropoffs)
+        for pid in self.player_sprite.pedidos_ids():
+            pedido = self.pedidos_dict.get(pid)
+            if pedido:
+                dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
+                dropoff_sprite = arcade.Sprite("assets/dropoff.png", scale=0.8)
+                dropoff_sprite.center_x = dropoff_x
+                dropoff_sprite.center_y = dropoff_y
+                dropoff_sprite.pedido_id = pid
+                self.dropoff_list.append(dropoff_sprite)
 
     def draw_popup_puntajes(self):
         ancho, alto = 500, 400
@@ -502,7 +645,10 @@ class MapaWindow(arcade.Window):
         self.end_message = ""
         self.end_stats = []
         self.pedidos_completados = 0
-        
+        self.undo_stack = []  # Stack de estados para deshacer (lista de dicts)
+        self.undo_limit = 10  # Máximo N pasos a deshacer (ajustable)
+        self.ultimo_movimiento_tiempo = 0  # Para guardar undo solo después de movimientos
+
 
         # Estado de transición de clima
         self.transicion_clima = {'activa': False}
@@ -910,6 +1056,7 @@ class MapaWindow(arcade.Window):
         self.target_x = self.player_sprite.center_x
         self.target_y = self.player_sprite.center_y
         self.moving = False
+        self.undo_stack.clear()  # Limpia undo al reiniciar
 
     def _force_redraw(self):
         """Fuerza un redibujo inmediato para cerrar popups (llamado después de reinicio)."""
@@ -1026,6 +1173,14 @@ class MapaWindow(arcade.Window):
             else:
                 self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
             return
+        # Reemplaza tu if actual con esto (después de la sección de [I], antes de las flechas)
+        if key == arcade.key.U:
+            # Chequea que no esté en popup o fin de juego
+            if self.game_over or self.nombre_popup_activo or self.popup_guardar_activo or self.popup_cargar_activo or self.mostrar_inventario_popup or self.mostrar_pedido or self.mostrar_meta_popup:
+                return  # Ignora undo en popups
+            self.deshacer_paso()
+            return
+
 
         if key == arcade.key.P:
             self.cargar_y_mostrar_puntajes()
@@ -1282,7 +1437,11 @@ class MapaWindow(arcade.Window):
             else:
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
-
+    # --- Guardar undo después de un movimiento exitoso ---
+        if not self.moving and self.tiempo_global > self.ultimo_movimiento_tiempo + 0.5:  # Solo cada 0.5s para evitar spam
+            if self.active_direction is not None or self.player_sprite.row != self.target_row or self.player_sprite.col != self.target_col:
+                self.guardar_estado_actual()
+                self.ultimo_movimiento_tiempo = self.tiempo_global
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
         
         if not pickups_hit:

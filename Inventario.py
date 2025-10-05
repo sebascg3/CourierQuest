@@ -80,4 +80,10 @@ class Inventario:
     def acomodar_deadline(self):
         pedidos = list(self.recorrer_adelante())
         return sorted(pedidos, key=lambda p: p.deadline)
+    
+    def vaciar(self):
+        self.inicio = None
+        self.fin = None
+        self._cantidad = 0
+        self._peso_total = 0.0
 

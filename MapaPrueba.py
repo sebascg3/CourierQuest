@@ -807,6 +807,9 @@ class MapaWindow(arcade.Window):
 
     def on_draw(self):
         self.clear()
+        if self.game_over:
+            self._draw_end_screen()
+            return
         if self.mostrar_meta_popup:
             self.draw_popup_meta()
             return 
@@ -817,7 +820,6 @@ class MapaWindow(arcade.Window):
             self.draw_popup_cargar()
             return
         if getattr(self, 'popup_guardar_activo', False):
-            # Dibuja detrás el mapa tenue? (Opcional: no lo implementamos ahora) Sólo popup.
             self.draw_popup_guardar()
             return
         if self.nombre_popup_activo:
@@ -859,38 +861,55 @@ class MapaWindow(arcade.Window):
         if self.mostrar_inventario_popup:
             self.draw_inventario_popup()
             return
-        if self.game_over:
-            self._draw_end_screen("Game Over")
-            return
+
 
     def restart_game(self):
-        """Reinicia el juego a estado inicial y cierra cualquier popup de fin de juego."""
-        # Resetea atributos clave (ajusta según necesites)
-        self.total_time = 15 * 60
-        self.player_sprite.ingresos = 0
-        self.player_sprite.reputacion = 1
-        self.player_sprite.inventario.vaciar()  # Asume que Inventario tiene vaciar()
-        self.pedidos_completados = 0
-        self.meta_cumplida = False
-        self.game_over = False  # Esto cierra el popup de derrota/victoria
+        """Reinicia el juego reseteando todas las variables de estado a sus valores iniciales."""
+        print("--- Reiniciando el juego ---")
+
+        self.game_over = False
         self.victoria = False
-        self.end_message = ""  # Limpia mensaje de fin (si usas el sistema de flags)
-        self.end_stats = []    # Limpia stats de fin
+        self.meta_cumplida = False
+        
+        self.total_time = 15 * 60 
+        self.tiempo_global = 0.0
+        
+        self.pedidos_dict = {}
+        self.pedidos_pendientes = []
+        self.pedidos_activos = {}
         self.pickup_list = arcade.SpriteList()
         self.dropoff_list = arcade.SpriteList()
-        self.pedidos_activos = {}
+
         self.pedido_actual = None
         self.mostrar_pedido = False
-        # Reinicia posición del jugador, clima, etc. (agrega más si es necesario)
-        self.player_sprite.center_x = self.target_x  # Posición inicial
-        self.player_sprite.center_y = self.target_y
-        # Reinicia clima y otros estados si es necesario
-        self.clima.reiniciar(self.clima.condicion, self.clima.intensidad, 60, self.clima.multiplicadorVelocidad)  # Ejemplo: reinicia clima
-    print("Juego reiniciado.")
+        self.pedido_activo_para_entrega = None
+        
+        self.player_sprite.reputacion = 70
+        self.player_sprite.ingresos = 0
+        self.player_sprite.inventario.inicio = None  
+        self.player_sprite.inventario._cantidad = 0
+        self.player_sprite.inventario._peso_total = 0.0
+        self.player_sprite.resistencia_obj.set_resistencia(100) 
+
+        # Vuelve a cargar los 5 pedidos originales desde la API o backup
+        self.cargar_pedidos() 
+        while True:
+            start_row = random.randint(0, ROWS - 1)
+            start_col = random.randint(0, COLS - 1)
+            if mapa[start_row][start_col] != "B":
+                self.player_sprite.row = start_row
+                self.player_sprite.col = start_col
+                self.player_sprite.center_x = (start_col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
+                self.player_sprite.center_y = (height * CELL_SIZE - (start_row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
+                break
+
+        self.target_x = self.player_sprite.center_x
+        self.target_y = self.player_sprite.center_y
+        self.moving = False
+
     def _force_redraw(self):
         """Fuerza un redibujo inmediato para cerrar popups (llamado después de reinicio)."""
-        arcade.schedule(lambda dt: None, 0.0)  # Truco simple para forzar on_draw en el próximo frame
-        # Alternativa: self.on_draw()  # Pero evita llamadas recursivas; usa el loop de Arcade
+        arcade.schedule(lambda dt: None, 0.0) 
 
 
     def on_key_press(self, key, modifiers):
@@ -909,8 +928,6 @@ class MapaWindow(arcade.Window):
                 # Opcional: Fuerza un redraw limpio para cerrar el popup en el frame actual
                 self._force_redraw()
             return  # No procesar más keys si game_over
-
-        # ... (resto de verificaciones de popups como mostrar_popup_puntajes, popup_cargar_activo, etc. – mantén como en tu código anterior)
 
         if self.nombre_popup_activo:
             if key == arcade.key.ENTER:
@@ -1120,6 +1137,8 @@ class MapaWindow(arcade.Window):
         save_backup()
 
     def on_update(self, delta_time):
+        if self.game_over:
+            return
         self.actualizar_notificaciones(delta_time)
         if self.total_time > 0:
             self.total_time -= delta_time
@@ -1233,10 +1252,9 @@ class MapaWindow(arcade.Window):
                         for texto, color in mensajes:
                             self.agregar_notificacion(texto, color)
                         self.pedidos_completados += 1
-                        if self.player_sprite.ingresos >= self.meta_ingresos and not self.meta_cumplida:
-                            self.meta_cumplida = True
                     self.pedido_activo_para_entrega = None
                     dropoff.remove_from_sprite_lists()
+
         self.tiempo_global += delta_time
         
         if self.check_game_end():
@@ -1280,39 +1298,40 @@ class MapaWindow(arcade.Window):
 
                 random.shuffle(pedidos_reciclados)
                 self.pedidos_pendientes = pedidos_reciclados
+        self.check_game_end()
 
-###########Tengo que meterle acá algo para cuando llega a la meta llegue a la victoria
+
     def check_game_end(self):
-        """Verifica si el juego terminó por victoria o derrota. Setea flags para el popup."""
+        """Verifica si el juego terminó por victoria o derrota."""
         if self.game_over:
-            return  # Ya terminó
-    # Inicializa variables para el popup si no existen
-        if not hasattr(self, 'end_message'):
-            self.end_message = ""
-        if not hasattr(self, 'end_stats'):
-            self.end_stats = []
-    # Victoria: si ingresos >= meta y no se ha cumplido antes
-        if self.player_sprite.ingresos >= self.meta_ingresos and not self.meta_cumplida:
-            self.meta_cumplida = True
+            return True
+
+        # VICTORIA
+        if self.player_sprite.ingresos >= self.meta_ingresos:
             self.victoria = True
             self.game_over = True
             self.end_message = "¡Victoria! Has alcanzado la meta de ingresos."
-            self.end_stats = self._get_end_stats()  # Calcula stats
-            self.guardar_puntaje_si_termina()  # Guarda el puntaje
+            self.end_stats = self._get_end_stats()
+            self.guardar_puntaje_si_termina()
             return True
-    # Derrota: si tiempo <= 0
-        if self.total_time <= 0 or self.player_sprite.reputacion < 20:
+        
+        #DERROTA
+        mensaje_derrota = ""
+        if self.total_time <= 0:
+            mensaje_derrota = "¡Derrota! Se te ha agotado el tiempo."
+        elif self.player_sprite.reputacion < 20:
+            mensaje_derrota = "¡Derrota! Tu reputación ha bajado a menos de 20."
+
+        if mensaje_derrota:
             self.victoria = False
             self.game_over = True
-            self.end_message = "¡Derrota! Se acabó el tiempo sin alcanzar la meta."
-            self.end_stats = self._get_end_stats()  # Calcula stats
-            self.guardar_puntaje_si_termina()  # Guarda el puntaje
+            self.end_message = mensaje_derrota
+            self.end_stats = self._get_end_stats()
+            self.guardar_puntaje_si_termina()
             return True
+
         return False
 
-
-
-    
        
     def obtener_multiplicador_superficie(self, row, col):
         """Devuelve el multiplicador de velocidad según la superficie de la celda."""
@@ -1328,7 +1347,7 @@ class MapaWindow(arcade.Window):
             f"Pedidos Completados: {self.pedidos_completados}",
             f"Tiempo Restante: {max(0, int(self.total_time)) // 60:02d}:{max(0, int(self.total_time)) % 60:02d}"
         ]
-    def _draw_end_screen(self, mensaje):
+    def _draw_end_screen(self):
         """Muestra el popup de fin de juego con mensaje y estadísticas."""
     # Pausa el juego (detiene actualizaciones en on_update)
         self.game_over = True

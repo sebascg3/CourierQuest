@@ -10,7 +10,8 @@ from MarkovClima import MarkovClima
 from Resistencia import Resistencia
 import math
 from datetime import datetime, timezone
-import os, json
+import os
+import json
 import pickle
 
 CELL_SIZE = 50
@@ -96,12 +97,100 @@ def save_backup():
     try:
         os.makedirs("data", exist_ok = True)
         ruta = os.path.join("data", "backup.json")
-        with open(ruta, "w", encoding="utf-8") as f:
+        with open(ruta, "w", encoding = "utf-8") as f:
             json.dump(BACKUP_DATA, f, ensure_ascii = False, indent = 2)
     except Exception as e:
         print(f"[WARN] No se pudo escribir backup.json: {e}")
 
 class MapaWindow(arcade.Window):
+    def __init__(self):
+        self.hora_inicio_juego_utc = datetime.now(timezone.utc)
+        self.meta_ingresos = 1500 
+        self.meta_cumplida = False
+        self.mostrar_meta_popup = True
+        self.mostrar_inventario_popup = False
+        self.inventario_seleccion_idx = 0  
+        self.pedido_activo_para_entrega = None
+        self.lista_inventario_visible = [] 
+        self.modo_orden = 'prioridad'
+        self.notificaciones = []
+        self.nombre_popup_activo = False
+        self.nombre_jugador = ""
+        self.active_direction = None
+        self.window_width = 800
+        self.window_height = 600
+        self.hud_height = 100
+        icon1 = pyglet.image.load("assets/repartidor.png")
+        icon2 = pyglet.image.load("assets/repartidor.png")
+        super().__init__(self.window_width, self.window_height, "Courier Quest",fixed_frame_cap=60, )
+        self.set_icon(icon1, icon2) 
+        self.pedir_nombre_popup()
+        arcade.set_background_color(arcade.color.WHITE)
+        # Estado popup cargar
+        self.popup_cargar_activo = False
+        self.slot_cargar_seleccionado = None
+        # Estado popup guardar
+        self.popup_guardar_activo = False
+        self.slot_seleccionado = None 
+        map_height = height * CELL_SIZE
+        self.scale_x = self.window_width / (width * CELL_SIZE) if width > 0 else 1
+        self.scale_y = (self.window_height - self.hud_height) / map_height if height > 0 else 1
+        self.player_list = arcade.SpriteList()
+        self.player_sprite = Repartidor("assets/repartidor.png", scale=0.8)
+        #inicializa resistencia
+        self.player_sprite.resistencia_obj = Resistencia()
+        self.total_time = 15 * 60
+        self.tex_parque = arcade.load_texture("assets/Parque.png")
+        self.tex_edificio = arcade.load_texture("assets/Edificio.png")
+        self.pedidos_dict = {} 
+        self.pickup_list = arcade.SpriteList()
+        self.dropoff_list = arcade.SpriteList()
+        self.pedidos_pendientes = []
+        self.pedidos_activos = {}
+        self.pedido_actual = None
+        self.mostrar_pedido = False
+        self.tiempo_ultimo_popup = 0
+        self.tiempo_global = 0  
+        # Inicialización para lógica de fin de juego
+        self.game_over = False
+        self.victoria = False
+        self.end_message = ""
+        self.end_stats = []
+        self.pedidos_completados = 0
+        self.undo_stack = []  # Stack de estados para deshacer (lista de dicts)
+        self.undo_limit = 10  # Máximo N pasos a deshacer (ajustable)
+        self.ultimo_movimiento_tiempo = 0  # Para guardar undo solo después de movimientos
+
+
+        # Estado de transición de clima
+        self.transicion_clima = {'activa': False}
+
+        # --- Clima dinámico ---
+        condicion_inicial = initial_weather.get("condition", "clear")
+        intensidad_inicial = initial_weather.get("intensity", 1.0)
+        duracion_inicial = random.randint(45, 60)  # clima normal
+        multiplicador = markov.obtenerMultiplicador(condicion_inicial)
+        self.clima = Clima(condicion_inicial, intensidad_inicial, duracion_inicial, multiplicador)
+        self.markov = markov
+
+        self.cargar_pedidos()
+        while True:
+            start_row = random.randint(0, ROWS - 1)
+            start_col = random.randint(0, COLS - 1)
+            if mapa[start_row][start_col] != "B": 
+                self.player_sprite.row = start_row
+                self.player_sprite.col = start_col
+                self.player_sprite.center_x = (start_col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
+                self.player_sprite.center_y = (height * CELL_SIZE - (start_row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
+                break
+        self.target_x = self.player_sprite.center_x
+        self.target_y = self.player_sprite.center_y
+        self.target_row = self.player_sprite.row
+        self.target_col = self.player_sprite.col
+        self.moving = False
+        self.move_speed = 150
+        self.player_list.append(self.player_sprite)
+
     # --- Popup de cargar partida ---
     def mostrar_popup_cargar(self):
         """Activa el popup para seleccionar slot de carga si no hay otros popups activos."""
@@ -158,8 +247,8 @@ class MapaWindow(arcade.Window):
         print(f"[DEBUG] Cargando partida de slot {slot} (placeholder)")
         self.slot_cargar_seleccionado = slot
         self.popup_cargar_activo = False
+
     def cargar_y_mostrar_puntajes(self):
-        import os, json
         ruta = os.path.join('data', 'puntajes.json')
         if os.path.exists(ruta):
             with open(ruta, 'r', encoding = 'utf-8') as f:
@@ -230,7 +319,6 @@ class MapaWindow(arcade.Window):
     
     def guardar_en_slot(self, slot:int):
         """Guarda el estado actual del juego en binario usando pickle."""
-        import pickle, os
         ruta = os.path.join('data', f'slot{slot}.bin')
         estado = {
             'total_time': self.total_time,
@@ -283,7 +371,6 @@ class MapaWindow(arcade.Window):
 
     def cargar_de_slot(self, slot:int):
         """Carga el estado guardado en binario y restaura los atributos principales."""
-        import pickle, os
         ruta = os.path.join('data', f'slot{slot}.bin')
         if not os.path.exists(ruta):
             print(f"No existe guardado en {ruta}")
@@ -597,115 +684,24 @@ class MapaWindow(arcade.Window):
         nuevo_mult = self.markov.obtenerMultiplicador(nueva_cond)
         self.iniciar_transicion_clima(nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult)
 
-
-    def __init__(self):
-        self.hora_inicio_juego_utc = datetime.now(timezone.utc)
-        self.meta_ingresos = 1500 
-        self.meta_cumplida = False
-        self.mostrar_meta_popup = True
-        self.mostrar_inventario_popup = False
-        self.inventario_seleccion_idx = 0  
-        self.pedido_activo_para_entrega = None
-        self.lista_inventario_visible = [] 
-        self.modo_orden = 'prioridad'
-        self.notificaciones = []
-        self.nombre_popup_activo = False
-        self.nombre_jugador = ""
-        self.active_direction = None
-        self.window_width = 800
-        self.window_height = 600
-        self.hud_height = 100
-        icon1 = pyglet.image.load("assets/repartidor.png")
-        icon2 = pyglet.image.load("assets/repartidor.png")
-        super().__init__(self.window_width, self.window_height, "Courier Quest",fixed_frame_cap=60, )
-        self.set_icon(icon1, icon2) 
-        self.pedir_nombre_popup()
-        arcade.set_background_color(arcade.color.WHITE)
-        # Estado popup cargar
-        self.popup_cargar_activo = False
-        self.slot_cargar_seleccionado = None
-        # Estado popup guardar
-        self.popup_guardar_activo = False
-        self.slot_seleccionado = None 
-        map_height = height * CELL_SIZE
-        self.scale_x = self.window_width / (width * CELL_SIZE) if width > 0 else 1
-        self.scale_y = (self.window_height - self.hud_height) / map_height if height > 0 else 1
-        self.player_list = arcade.SpriteList()
-        self.player_sprite = Repartidor("assets/repartidor.png", scale=0.8)
-        #inicializa resistencia
-        self.player_sprite.resistencia_obj = Resistencia()
-        self.total_time = 15 * 60
-        self.tex_parque = arcade.load_texture("assets/Parque.png")
-        self.tex_edificio = arcade.load_texture("assets/Edificio.png")
-        self.pedidos_dict = {} 
-        self.pickup_list = arcade.SpriteList()
-        self.dropoff_list = arcade.SpriteList()
-        self.pedidos_pendientes = []
-        self.pedidos_activos = {}
-        self.pedido_actual = None
-        self.mostrar_pedido = False
-        self.tiempo_ultimo_popup = 0
-        self.tiempo_global = 0  
-        # Inicialización para lógica de fin de juego
-        self.game_over = False
-        self.victoria = False
-        self.end_message = ""
-        self.end_stats = []
-        self.pedidos_completados = 0
-        self.undo_stack = []  # Stack de estados para deshacer (lista de dicts)
-        self.undo_limit = 10  # Máximo N pasos a deshacer (ajustable)
-        self.ultimo_movimiento_tiempo = 0  # Para guardar undo solo después de movimientos
-
-
-        # Estado de transición de clima
-        self.transicion_clima = {'activa': False}
-
-        # --- Clima dinámico ---
-        condicion_inicial = initial_weather.get("condition", "clear")
-        intensidad_inicial = initial_weather.get("intensity", 1.0)
-        duracion_inicial = random.randint(45, 60)  # clima normal
-        multiplicador = markov.obtenerMultiplicador(condicion_inicial)
-        self.clima = Clima(condicion_inicial, intensidad_inicial, duracion_inicial, multiplicador)
-        self.markov = markov
-
-        self.cargar_pedidos()
-        while True:
-            start_row = random.randint(0, ROWS - 1)
-            start_col = random.randint(0, COLS - 1)
-            if mapa[start_row][start_col] != "B": 
-                self.player_sprite.row = start_row
-                self.player_sprite.col = start_col
-                self.player_sprite.center_x = (start_col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
-                self.player_sprite.center_y = (height * CELL_SIZE - (start_row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
-                break
-        self.target_x = self.player_sprite.center_x
-        self.target_y = self.player_sprite.center_y
-        self.target_row = self.player_sprite.row
-        self.target_col = self.player_sprite.col
-        self.moving = False
-        self.move_speed = 150
-        self.player_list.append(self.player_sprite)
-
     def celda_a_pixeles(self, row, col):
         x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
         y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
         return x, y
 
-
     def draw_hud(self):
-        """Dibuja el HUD completo en la parte superior (100px de altura, fondo verde)."""
+        """Dibuja el HUD completo en la parte superior"""
         hud_y = self.window_height - self.hud_height
-        # Fondo y borde del HUD
+        
         arcade.draw_lbwh_rectangle_filled(
             0, hud_y, self.window_width, self.hud_height,
-            arcade.color.WHITE_SMOKE  # Fondo Harvard Crimson
+            arcade.color.WHITE_SMOKE  
         )
         arcade.draw_lbwh_rectangle_outline(
             0, hud_y, self.window_width, self.hud_height,
-            arcade.color.BLACK, 3  # Borde grueso negro
+            arcade.color.BLACK, 3 
         )
     
-        # Preparar textos organizados
         pedidos = []
         nodo = self.player_sprite.inventario.inicio
         while nodo:
@@ -730,28 +726,25 @@ class MapaWindow(arcade.Window):
 
         # Resistencia
         arcade.draw_text(reputacion_text, hud_padding, stats_y - 55, arcade.color.BLACK, hud_font_size, anchor_y="top")
-        # Nueva: Texto de resistencia debajo de reputación
+        
         resistencia_actual = self.player_sprite.get_resistencia_actual()
         resistencia_text = f"Resistencia:        {int(resistencia_actual)}  /100"
         arcade.draw_text(resistencia_text, hud_padding, stats_y - 70, arcade.color.BLACK, hud_font_size, anchor_y="top")
-        # Barra visual de resistencia (fondo gris, relleno verde, ancho 100, alto 10)
+        # Barra de resistencia
         bar_x = hud_padding
         bar_y = stats_y - 85
         bar_width = 100
         bar_height = 10
-        # Fondo de la barra
         arcade.draw_lbwh_rectangle_filled(bar_x, bar_y, bar_width, bar_height, arcade.color.GRAY)
-        # Relleno proporcional (verde si >30, amarillo si 0-30, rojo si exhausted)
+        
         fill_color = arcade.color.GREEN if resistencia_actual > 30 else (arcade.color.YELLOW if resistencia_actual > 10 else arcade.color.RED)
         fill_width = (resistencia_actual / 100.0) * bar_width
         arcade.draw_lbwh_rectangle_filled(bar_x, bar_y, fill_width, bar_height, fill_color)
-        # Borde de la barra
         arcade.draw_lbwh_rectangle_outline(bar_x, bar_y, bar_width, bar_height, arcade.color.BLACK, 1)
 
 
-    # Texto centrado arriba: '[P]' para ver puntuaciones
-        # Cartel de puntuaciones (centrado arriba)
-        cartel_y = hud_y + self.hud_height - hud_padding - 10
+    # Carteles de controles (centro)
+        cartel_y = hud_y + self.hud_height - hud_padding - 5
         arcade.draw_text(
             "[I] para abrir inventario y seleccionar!",
             self.window_width // 2, cartel_y-60,
@@ -764,14 +757,12 @@ class MapaWindow(arcade.Window):
             arcade.color.DARK_BLUE, hud_font_size + 2,
             anchor_x="center", anchor_y="top"
         )
-        # Cartel de guardar (debajo)
         arcade.draw_text(
             "[G] para guardar partida!",
             self.window_width // 2, cartel_y - 22,
             arcade.color.DARK_GREEN, hud_font_size + 2,
             anchor_x="center", anchor_y="top"
         )
-        # Cartel de cargar (debajo)
         arcade.draw_text(
             "[L] para cargar partida!",
             self.window_width // 2, cartel_y - 44,
@@ -779,15 +770,15 @@ class MapaWindow(arcade.Window):
             anchor_x="center", anchor_y="top"
         )
     
-        # Timer (derecha superior)
+        #Timer
         minutes = int(self.total_time) // 60
         seconds = int(self.total_time) % 60
         timer_text = f"Tiempo: {minutes:02d}:{seconds:02d}"
-        timer_x = self.window_width - hud_padding - 80  # Ajuste para ancho del texto
+        timer_x = self.window_width - hud_padding - 80  
         arcade.draw_text(timer_text, timer_x, stats_y, arcade.color.RED, hud_font_size + 5, anchor_x="center", anchor_y="top")
     
-    # Clima (derecha inferior, multiline) - ajustado para no superponerse con timer
-        clima_x = self.window_width - hud_padding - 70  # Ancho aproximado para multiline
+    #Clima
+        clima_x = self.window_width - hud_padding - 70 
         clima_y = hud_y + hud_padding
         arcade.draw_text(
             clima_text,
@@ -1078,15 +1069,13 @@ class MapaWindow(arcade.Window):
         # Verificación de game_over (al inicio, para pausar todo y manejar reinicio)
         if self.game_over:
             if key == arcade.key.SPACE or key == arcade.key.ESCAPE:
-                # Cerrar y salir
                 self.close()
             elif key == arcade.key.R:
-                # Reiniciar juego (setea game_over=False para cerrar el popup inmediatamente)
+                # Reiniciar juego 
                 self.restart_game()
-                # Opcional: Fuerza un redraw limpio para cerrar el popup en el frame actual
                 self._force_redraw()
-            return  # No procesar más keys si game_over
-
+            return 
+        # Manejo de popups
         elif self.nombre_popup_activo:
             if key == arcade.key.ENTER:
                 if self.nombre_jugador.strip():
@@ -1158,17 +1147,16 @@ class MapaWindow(arcade.Window):
                         self.mostrar_inventario_popup = False
             return
 
-        # --- Teclas de prueba para victoria/derrota (solo para debug) ---
-        if key == arcade.key.V:  # 'V' para forzar VICTORIA
+        #Depuracion
+        if key == arcade.key.V:
             print("[DEBUG] Forzando victoria...")
-            self.player_sprite.ingresos = self.meta_ingresos + 1  # Simula que se alcanzó la meta
+            self.player_sprite.ingresos = self.meta_ingresos + 1 
             self.meta_cumplida = True
             self.check_game_end()
             return
-        elif key == arcade.key.D:  # 'D' para forzar DERROTA
+        elif key == arcade.key.D:
             print("[DEBUG] Forzando derrota...")
-            self.total_time = 0  # Simula que se acabó el tiempo
-            # Opcional: self.player_sprite.reputacion = 30  # Para probar derrota por reputación baja
+            self.total_time = 0  
             self.check_game_end()
             return
 
@@ -1180,15 +1168,14 @@ class MapaWindow(arcade.Window):
             else:
                 self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
             return
-        # Reemplaza tu if actual con esto (después de la sección de [I], antes de las flechas)
+        #Deshacer movimiento con 'U'
         if key == arcade.key.U:
-            # Chequea que no esté en popup o fin de juego
             if self.game_over or self.nombre_popup_activo or self.popup_guardar_activo or self.popup_cargar_activo or self.mostrar_inventario_popup or self.mostrar_pedido or self.mostrar_meta_popup:
-                return  # Ignora undo en popups
+                return  
             self.deshacer_paso()
             return
 
-
+        #Mostrar popup de puntajes
         if key == arcade.key.P:
             self.cargar_y_mostrar_puntajes()
             return
@@ -1214,25 +1201,24 @@ class MapaWindow(arcade.Window):
         if self.mostrar_pedido and self.pedido_actual:
             if key == arcade.key.A: 
                 pedido = self.pedido_actual
-                #
                 print(f"Pedido {pedido.id} aceptado")
                 self.pedidos_activos[pedido.id] = pedido 
                 pedido.tiempo_expiracion = self.tiempo_global + TIEMPO_PARA_RECOGER
                 
-                # Mantener pickups y dropoffs en su posición original
+                #Mantener pickups y dropoffs en su posición original
                 pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
                 dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
                 self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
                 self.mostrar_pedido = False
                 self.pedido_actual = None
             elif key == arcade.key.R:  
-                #
                 print(f"Pedido {self.pedido_actual.id} rechazado")
                 self.mostrar_pedido = False
                 self.pedido_actual = None
         if self.active_direction == key:
             self.active_direction = None
 
+        #Manejo de movimiento
     def try_move(self):
         if self.moving or self.active_direction is None or not self.player_sprite.puede_moverse():
             if not self.player_sprite.puede_moverse():
@@ -1270,6 +1256,7 @@ class MapaWindow(arcade.Window):
             self.moving = True
 
     def celda_a_pixeles(self, row, col):
+        """Convierte coordenadas de celda a coordenadas de píxeles"""
         x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
         y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
         return x, y
@@ -1391,25 +1378,24 @@ class MapaWindow(arcade.Window):
 
         if not self.player_sprite.puede_moverse() and self.moving:
             self.moving = False
-            self.player_sprite.center_x = self.target_x  # Detiene en la posición actual
+            self.player_sprite.center_x = self.target_x 
             self.player_sprite.center_y = self.target_y
             self.player_sprite.row = self.target_row
             self.player_sprite.col = self.target_col
-            ###
             print("¡Agotado! Descansando hasta recuperar 30% de resistencia.")
 
-
+        # Manejo de movimiento suave
         if self.moving:
             dx = self.target_x - self.player_sprite.center_x
             dy = self.target_y - self.player_sprite.center_y
             dist = (dx ** 2 + dy ** 2) ** 0.5
-
-            
+        
             mult_clima = self.clima.multiplicadorVelocidad
             if self.clima.condicion != "clear":
                 mult_clima *= (1 - self.clima.intensidad * 0.5)
             mult_clima = max(mult_clima, 0.1)
 
+            # Reduccion por peso de velocidad
             peso_total = self.player_sprite.inventario.peso_total()
             peso_maximo = self.player_sprite.inventario.peso_maximo
             speed_reduction_factor = 0.8
@@ -1418,6 +1404,7 @@ class MapaWindow(arcade.Window):
 
             mult_resistencia = self.player_sprite.resistencia_obj.get_multiplicador_velocidad()
 
+            # Reduccion por superficie
             mult_surface_actual = self.obtener_multiplicador_superficie(self.player_sprite.row, self.player_sprite.col)
             mult_surface_dest = self.obtener_multiplicador_superficie(self.target_row, self.target_col)
             mult_surface = (mult_surface_actual + mult_surface_dest) / 2.0
@@ -1445,12 +1432,13 @@ class MapaWindow(arcade.Window):
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
     # --- Guardar undo después de un movimiento exitoso ---
-        if not self.moving and self.tiempo_global > self.ultimo_movimiento_tiempo + 0.5:  # Solo cada 0.5s para evitar spam
+        if not self.moving and self.tiempo_global > self.ultimo_movimiento_tiempo + 0.5:
             if self.active_direction is not None or self.player_sprite.row != self.target_row or self.player_sprite.col != self.target_col:
                 self.guardar_estado_actual()
                 self.ultimo_movimiento_tiempo = self.tiempo_global
         pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
-        
+
+        # Verificación adicional para pickups en edificios
         if not pickups_hit:
             for pickup in self.pickup_list:
                 pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
@@ -1463,7 +1451,7 @@ class MapaWindow(arcade.Window):
                     if (self.player_sprite.row == celda_accesible_row and 
                         self.player_sprite.col == celda_accesible_col):
                         pickups_hit.append(pickup)
-        
+        # Manejo de pickups y dropoffs
         if pickups_hit:
             for pickup in pickups_hit:
                 pedido_obj = self.pedidos_dict[pickup.pedido_id]
@@ -1492,7 +1480,7 @@ class MapaWindow(arcade.Window):
                                 self.player_sprite.col == celda_accesible_col):
                                 dropoffs_hit.append(dropoff)
                                 break
-            
+            # Manejo de entregas
             for dropoff in dropoffs_hit:
                 if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
                     
@@ -1510,7 +1498,7 @@ class MapaWindow(arcade.Window):
         if self.check_game_end():
 
             return
-
+        # Verifica expiración de pedidos activos
         pedidos_expirados = []
         for pedido_id, pedido in self.pedidos_activos.items():
             if self.tiempo_global > pedido.tiempo_expiracion:
@@ -1527,7 +1515,7 @@ class MapaWindow(arcade.Window):
             for sprite in self.dropoff_list:
                 if sprite.pedido_id == pedido_id:
                     sprite.remove_from_sprite_lists()
-        #logica para enciclar
+        # Logica para enciclar
         if not self.mostrar_pedido:
             pedido_encontrado_para_mostrar = None
             for pedido in self.pedidos_pendientes:
@@ -1555,7 +1543,6 @@ class MapaWindow(arcade.Window):
         """Verifica si el juego terminó por victoria o derrota."""
         if self.game_over:
             return True
-
         # VICTORIA
         if self.player_sprite.ingresos >= self.meta_ingresos:
             self.victoria = True
@@ -1564,8 +1551,7 @@ class MapaWindow(arcade.Window):
             self.end_stats = self._get_end_stats()
             self.guardar_puntaje_si_termina()
             return True
-        
-        #DERROTA
+        # DERROTA
         mensaje_derrota = ""
         if self.total_time <= 0:
             mensaje_derrota = "¡Derrota! Se te ha agotado el tiempo."
@@ -1581,14 +1567,14 @@ class MapaWindow(arcade.Window):
             return True
 
         return False
-
-       
+ 
     def obtener_multiplicador_superficie(self, row, col):
         """Devuelve el multiplicador de velocidad según la superficie de la celda."""
         if 0 <= row < ROWS and 0 <= col < COLS:
             tipo = mapa[row][col]
             return SURFACE_WEIGHTS.get(tipo, 1.0)
         return 1.0
+    
     def _get_end_stats(self):
         """Método auxiliar para calcular estadísticas de fin de juego."""
         return [
@@ -1597,20 +1583,21 @@ class MapaWindow(arcade.Window):
             f"Pedidos Completados: {self.pedidos_completados}",
             f"Tiempo Restante: {max(0, int(self.total_time)) // 60:02d}:{max(0, int(self.total_time)) % 60:02d}"
         ]
+    
     def _draw_end_screen(self):
         """Muestra el popup de fin de juego con mensaje y estadísticas."""
-    # Pausa el juego (detiene actualizaciones en on_update)
+    # Pausa el juego
         self.game_over = True
     # Obtener estadísticas
         ingresos = self.player_sprite.ingresos
         reputacion = self.player_sprite.reputacion
         tiempo_restante = max(0, int(self.total_time))
         pedidos = self.pedidos_completados
-    # Color según victoria o derrota
+
         color_fondo = arcade.color.DARK_GREEN if self.victoria else arcade.color.DARK_RED
         color_texto = arcade.color.WHITE
         color_titulo = arcade.color.YELLOW if self.victoria else arcade.color.ORANGE_RED
-    # Dibujar popup (se llamará desde on_draw)
+    # Dibujar popup
         ancho, alto = 500, 400
         x = self.window_width // 2 - ancho // 2
         y = self.window_height // 2 - alto // 2
@@ -1630,7 +1617,3 @@ class MapaWindow(arcade.Window):
     # Instrucciones
         arcade.draw_text("Presiona [ESC] para cerrar o [R] para reiniciar", x + ancho // 2, y + 30, arcade.color.LIGHT_GRAY, 14, anchor_x="center", anchor_y="top")
 
-
-if __name__ == "__main__":
-    MapaWindow()
-    arcade.run()

@@ -22,6 +22,7 @@ class Pedido:
         self.coord_entregar = coord_entregar
         self.release_time = release_time
         self.tiempo_expiracion = 0.0
+        self.tiempo_recogido_contador = 0.0 
 
 
 

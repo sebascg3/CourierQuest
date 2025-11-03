@@ -191,6 +191,29 @@ class MapaWindow(arcade.Window):
         self.move_speed = 150
         self.player_list.append(self.player_sprite)
 
+        # --- NUEVO: crear segundo jugador (NPC) estático ---
+        self.npc_list = arcade.SpriteList()
+        # Busca una celda libre distinta a la del jugador
+        while True:
+            npc_row = random.randint(0, ROWS - 1)
+            npc_col = random.randint(0, COLS - 1)
+            if mapa[npc_row][npc_col] != "B" and not (npc_row == self.player_sprite.row and npc_col == self.player_sprite.col):
+                break
+        self.npc_sprite = Repartidor("assets/repartidor.png", scale=0.8)  # usa mismo asset por simplicidad
+        self.npc_sprite.row = npc_row
+        self.npc_sprite.col = npc_col
+        self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(npc_row, npc_col)
+        # Marca opcional para identificarlo
+        self.npc_sprite.nombre = "NPC"
+        # No mover ni actualizar: sprite estático
+        self.npc_list.append(self.npc_sprite)
+
+        # --- NUEVO: estado para popup de dificultad ---
+        self.difficulty_popup_active = False
+        self.difficulty_options = ["Fácil", "Normal", "Difícil"]
+        self.difficulty_selected_idx = 1  # por defecto 'Normal'
+        self.npc_difficulty = None
+
     # --- Popup de cargar partida ---
     def mostrar_popup_cargar(self):
         """Activa el popup para seleccionar slot de carga si no hay otros popups activos."""
@@ -953,6 +976,32 @@ class MapaWindow(arcade.Window):
                 bold=True
             )
 
+    def draw_difficulty_popup(self):
+        """Dibuja el popup de selección de dificultad para el NPC."""
+        if not getattr(self, 'difficulty_popup_active', False):
+            return
+        ancho, alto = 420, 200
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        arcade.draw_text("Selecciona dificultad del NPC",
+                         x + ancho / 2, y + alto - 40,
+                         arcade.color.GOLD, 18, anchor_x="center", bold=True)
+
+        # Opciones
+        for i, opt in enumerate(self.difficulty_options):
+            oy = y + alto - 90 - i * 36
+            bg = arcade.color.DARK_BLUE if i == self.difficulty_selected_idx else arcade.color.DARK_GRAY
+            outline = arcade.color.YELLOW if i == self.difficulty_selected_idx else arcade.color.LIGHT_GRAY
+            arcade.draw_lbwh_rectangle_filled(x + 40, oy, ancho - 80, 30, bg)
+            arcade.draw_lbwh_rectangle_outline(x + 40, oy, ancho - 80, 30, outline, 2)
+            arcade.draw_text(f"{i+1}. {opt}", x + 60, oy + 15, arcade.color.WHITE, 14, anchor_x="left", anchor_y="center")
+
+        arcade.draw_text("←/→ o ↑/↓ para navegar, [1-3] seleccionar, Enter confirmar, ESC cancelar",
+                         x + ancho / 2, y + 18, arcade.color.LIGHT_GRAY, 10, anchor_x="center")
+
     def on_draw(self):
         self.clear()
         if self.game_over:
@@ -973,6 +1022,10 @@ class MapaWindow(arcade.Window):
         if self.nombre_popup_activo:
             self.draw_nombre_popup()
             return
+        # --- NUEVO: mostrar popup dificultad si está activo (después del nombre) ---
+        if getattr(self, 'difficulty_popup_active', False):
+            self.draw_difficulty_popup()
+            return
         self.draw_hud()
         for row in range(ROWS):
             for col in range(COLS):
@@ -988,6 +1041,16 @@ class MapaWindow(arcade.Window):
                     color = arcade.color.GRAY if tipo == "C" else arcade.color.BLACK
                     arcade.draw_rect_filled(rect, color)
                 arcade.draw_rect_outline(rect, arcade.color.BLACK, 1)
+        # --- NUEVO: dibujar NPC (segundo jugador) ---
+        self.npc_list.draw()
+        # Dibuja etiqueta encima del NPC
+        try:
+            for npc in self.npc_list:
+                arcade.draw_text(getattr(npc, "nombre", ""), npc.center_x, npc.center_y + 24,
+                                 arcade.color.BLACK, 12, anchor_x="center")
+        except Exception:
+            pass
+
         self.player_list.draw()
         self.pickup_list.draw()
         sprite_activo = None
@@ -1062,6 +1125,42 @@ class MapaWindow(arcade.Window):
 
 
     def on_key_press(self, key, modifiers):
+        # --- PRIORIDAD: manejar popup de dificultad primero ---
+        if getattr(self, 'difficulty_popup_active', False):
+            # navegación
+            if key in (arcade.key.UP, arcade.key.LEFT):
+                self.difficulty_selected_idx = (self.difficulty_selected_idx - 1) % len(self.difficulty_options)
+                return
+            if key in (arcade.key.DOWN, arcade.key.RIGHT):
+                self.difficulty_selected_idx = (self.difficulty_selected_idx + 1) % len(self.difficulty_options)
+                return
+            # selección directa
+            if key == arcade.key.KEY_1:
+                self.difficulty_selected_idx = 0
+                return
+            elif key == arcade.key.KEY_2:
+                self.difficulty_selected_idx = 1
+                return
+            elif key == arcade.key.KEY_3:
+                self.difficulty_selected_idx = 2
+                return
+            # confirmar
+            if key == arcade.key.ENTER:
+                self.npc_difficulty = self.difficulty_options[self.difficulty_selected_idx]
+                self.difficulty_popup_active = False
+                try:
+                    self.npc_sprite.nombre = f"NPC ({self.npc_difficulty})"
+                except Exception:
+                    pass
+                self.agregar_notificacion(f"Dificultad NPC: {self.npc_difficulty}", arcade.color.CYAN)
+                return
+            # cancelar
+            if key == arcade.key.ESCAPE:
+                self.difficulty_popup_active = False
+                self.npc_difficulty = None
+                self.agregar_notificacion("Selección de dificultad cancelada.", arcade.color.LIGHT_GRAY)
+                return
+
         if self.mostrar_meta_popup and key == arcade.key.ENTER:
             self.mostrar_meta_popup = False
             return
@@ -1081,6 +1180,9 @@ class MapaWindow(arcade.Window):
                 if self.nombre_jugador.strip():
                     self.nombre_popup_activo = False
                     self.player_sprite.nombre = self.nombre_jugador.strip()
+                    # --- NUEVO: activar selección de dificultad justo después de ingresar nombre ---
+                    self.difficulty_popup_active = True
+                    self.difficulty_selected_idx = 1
             elif key == arcade.key.BACKSPACE:
                 self.nombre_jugador = self.nombre_jugador[:-1]
             elif 32 <= key <= 126 and len(self.nombre_jugador) < 16:

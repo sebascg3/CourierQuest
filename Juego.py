@@ -1649,6 +1649,7 @@ class MapaWindow(arcade.Window):
         self.actualizar_npc(delta_time)
 
 
+
     def check_game_end(self):
         """Verifica si el juego terminó por victoria o derrota."""
         if self.game_over:
@@ -1746,7 +1747,9 @@ class MapaWindow(arcade.Window):
             self.npc_pedido_activo = self.elegir_pedido_npc()
         # Mover NPC basado en dificultad
         if self.npc_pedido_activo:
-            objetivo_pos = self.npc_pedido_activo.coord_entregar if self.npc_sprite.tiene_pedido(self.npc_pedido_activo.id) else self.npc_pedido_activo.coord_recoger
+            # Determinar objetivo: recoger si no tiene el pedido, entregar si lo tiene
+            tiene_pedido = self.npc_sprite.tiene_pedido(self.npc_pedido_activo.id)
+            objetivo_pos = self.npc_pedido_activo.coord_entregar if tiene_pedido else self.npc_pedido_activo.coord_recoger
             nueva_pos = self.calcular_movimiento_npc(objetivo_pos)
             if nueva_pos and nueva_pos != (self.npc_spriteRow, self.npc_spriteCol):
                 self.npc_spriteRow, self.npc_spriteCol = nueva_pos
@@ -1757,7 +1760,20 @@ class MapaWindow(arcade.Window):
         # Reset movimiento
         self.npc_moving = False
     def tiene_pedido(self, pedido_id):
-        return any(nodo.pedido.id == pedido_id for nodo in self.inventario)
+        """Verifica si el repartidor tiene un pedido específico en su inventario."""
+        nodo = self.inventario.inicio
+        while nodo:
+            if nodo.pedido.id == pedido_id:
+                return True
+            nodo = nodo.siguiente
+        return False
+    def npc_tiene_pedido(self, repartidor, pedido_id):
+        nodo = repartidor.inventario.inicio
+        while nodo:
+            if nodo.pedido.id == pedido_id:
+                return True
+            nodo = nodo.siguiente
+        return False
     def elegir_pedido_npc(self):
         """Elige un pedido disponible basado en dificultad."""
         disponibles = [p for p in self.pedidos_pendientes if self.tiempo_global >= p.release_time]

@@ -200,11 +200,14 @@ class MapaWindow(arcade.Window):
             if mapa[npc_row][npc_col] != "B" and not (npc_row == self.player_sprite.row and npc_col == self.player_sprite.col):
                 break
         self.npc_sprite = Repartidor("assets/repartidor.png", scale=0.8)  # usa mismo asset por simplicidad
-        self.npc_sprite.row = npc_row
-        self.npc_sprite.col = npc_col
+        self.npc_sprite.resistencia_obj = Resistencia()
+        self.npc_spriteRow = npc_row
+        self.npc_spriteCol = npc_col
         self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(npc_row, npc_col)
         # Marca opcional para identificarlo
         self.npc_sprite.nombre = "NPC"
+        self.npc_sprite.ingresos = 0
+        self.npc_sprite.reputacion = 70  # Igual que el jugador inicial
         # No mover ni actualizar: sprite estático
         self.npc_list.append(self.npc_sprite)
 
@@ -213,6 +216,9 @@ class MapaWindow(arcade.Window):
         self.difficulty_options = ["Fácil", "Normal", "Difícil"]
         self.difficulty_selected_idx = 1  # por defecto 'Normal'
         self.npc_difficulty = None
+        self.npc_moving = False  # Para controlar si el NPC se está moviendo (para resistencia)
+        self.npc_pedido_activo = None  # Pedido actual del NPC
+        self.npc_action_timer = 0  # Temporizador para acciones periódicas
 
     # --- Popup de cargar partida ---
     def mostrar_popup_cargar(self):
@@ -1640,6 +1646,8 @@ class MapaWindow(arcade.Window):
                 self.pedidos_pendientes = pedidos_reciclados
         self.check_game_end()
 
+        self.actualizar_npc(delta_time)
+
 
     def check_game_end(self):
         """Verifica si el juego terminó por victoria o derrota."""
@@ -1719,3 +1727,104 @@ class MapaWindow(arcade.Window):
     # Instrucciones
         arcade.draw_text("Presiona [ESC] para cerrar o [R] para reiniciar", x + ancho // 2, y + 30, arcade.color.LIGHT_GRAY, 14, anchor_x="center", anchor_y="top")
 
+
+    def actualizar_npc(self, delta_time):
+        """Actualiza el NPC: movimiento, pickups, dropoffs, etc."""
+        if not self.npc_difficulty:
+            return
+        # Temporizador para acciones periódicas (cada 1s)
+        if not hasattr(self, 'npc_action_timer'):
+            self.npc_action_timer = 0
+        self.npc_action_timer += delta_time
+        if self.npc_action_timer < 1.0:
+            return
+        self.npc_action_timer = 0
+        # Actualizar resistencia del NPC (igual que el jugador)
+        self.npc_sprite.actualizar_resistencia(delta_time, self.npc_moving, self.npc_sprite.peso_total, self.clima.condicion, self.clima.intensidad)
+        # Elegir pedido si no tiene uno activo
+        if not hasattr(self, 'npc_pedido_activo') or not self.npc_pedido_activo:
+            self.npc_pedido_activo = self.elegir_pedido_npc()
+        # Mover NPC basado en dificultad
+        if self.npc_pedido_activo:
+            objetivo_pos = self.npc_pedido_activo.coord_entregar if self.npc_sprite.tiene_pedido(self.npc_pedido_activo.id) else self.npc_pedido_activo.coord_recoger
+            nueva_pos = self.calcular_movimiento_npc(objetivo_pos)
+            if nueva_pos and nueva_pos != (self.npc_spriteRow, self.npc_spriteCol):
+                self.npc_spriteRow, self.npc_spriteCol = nueva_pos
+                self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(*nueva_pos)
+                self.npc_moving = True  # Para resistencia
+        # Verificar pickups/dropoffs (igual que el jugador)
+        self.verificar_interacciones_npc()
+        # Reset movimiento
+        self.npc_moving = False
+    def tiene_pedido(self, pedido_id):
+        return any(nodo.pedido.id == pedido_id for nodo in self.inventario)
+    def elegir_pedido_npc(self):
+        """Elige un pedido disponible basado en dificultad."""
+        disponibles = [p for p in self.pedidos_pendientes if self.tiempo_global >= p.release_time]
+        if not disponibles:
+            return None
+        if self.npc_difficulty == "Fácil":
+            return random.choice(disponibles) if disponibles else None
+        elif self.npc_difficulty in ["Normal", "Difícil"]:
+            # Elegir el de mayor payout / menor distancia
+            mejor = max(disponibles, key=lambda p: p.pago / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1))
+            return mejor
+        return None
+
+    def distancia_manhattan(self, pos1, pos2):
+        """Calcula la distancia de Manhattan entre dos posiciones."""
+        row1, col1 = pos1
+        row2, col2 = pos2
+        return abs(row1 - row2) + abs(col1 - col2)
+    def _distancia_manhattan(self, pos1, pos2):
+        """Calculates the Manhattan distance between two positions."""
+        row1, col1 = pos1
+        row2, col2 = pos2
+        return abs(row1 - row2) + abs(col1 - col2)
+
+    def calcular_movimiento_npc(self, objetivo_pos):
+        """Calcula el siguiente movimiento basado en dificultad."""
+        npc_pos = (self.npc_spriteRow, self.npc_spriteCol)
+        
+        # Calculate the next step towards the target position
+        target_row, target_col = objetivo_pos
+        current_row, current_col = npc_pos
+
+        # Determine the direction to move (Manhattan distance)
+        if current_row < target_row:
+            next_pos = (current_row + 1, current_col)
+        elif current_row > target_row:
+            next_pos = (current_row - 1, current_col)
+        elif current_col < target_col:
+            next_pos = (current_row, current_col + 1)
+        elif current_col > target_col:
+            next_pos = (current_row, current_col - 1)
+        else:
+            next_pos = npc_pos  # Already at the target
+
+        # Ensure the next position is not a building
+        if 0 <= next_pos[0] < ROWS and 0 <= next_pos[1] < COLS and mapa[next_pos[0]][next_pos[1]] != "B":
+            return next_pos
+        return npc_pos  # Stay in place if the next position is invalid
+    
+    def verificar_interacciones_npc(self):
+        """Verifica pickups y dropoffs para el NPC."""
+        if not self.npc_pedido_activo:
+            return
+        # Pickups
+        for pickup in self.pickup_list:
+            if pickup.pedido_id == self.npc_pedido_activo.id and self.npc_spriteRow == self.npc_pedido_activo.coord_recoger[0] and self.npc_spriteCol == self.npc_pedido_activo.coord_recoger[1]:
+                if self.npc_sprite.pickup(self.npc_pedido_activo, self.total_time):
+                    pickup.remove_from_sprite_lists()
+                    if self.npc_pedido_activo.id in self.pedidos_activos:
+                        del self.pedidos_activos[self.npc_pedido_activo.id]
+
+        # Dropoffs
+        for dropoff in self.dropoff_list:
+            if dropoff.pedido_id == self.npc_pedido_activo.id and self.npc_spriteRow == self.npc_pedido_activo.coord_entregar[0] and self.npc_spriteCol == self.npc_pedido_activo.coord_entregar[1]:
+                mensajes = self.npc_sprite.dropoff(self.npc_pedido_activo.id, self.total_time)
+                if mensajes:
+                    self.npc_pedido_activo = None  # Completado
+                dropoff.remove_from_sprite_lists()
+
+    

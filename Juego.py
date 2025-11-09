@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import os
 import json
 import pickle
+import heapq
 
 CELL_SIZE = 50
 BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
@@ -124,6 +125,7 @@ class MapaWindow(arcade.Window):
         icon2 = pyglet.image.load("assets/repartidor.png")
         super().__init__(self.window_width, self.window_height, "Courier Quest",fixed_frame_cap=60, )
         self.set_icon(icon1, icon2) 
+        # Activar popup de nombre usando el método restaurado
         self.pedir_nombre_popup()
         arcade.set_background_color(arcade.color.WHITE)
         # Estado popup cargar
@@ -201,6 +203,9 @@ class MapaWindow(arcade.Window):
                 break
         self.npc_sprite = Repartidor("assets/repartidor.png", scale=0.8)  # usa mismo asset por simplicidad
         self.npc_sprite.resistencia_obj = Resistencia()
+        # Inicializa coordenadas/estado del NPC
+        self.npc_sprite.row = npc_row
+        self.npc_sprite.col = npc_col
         self.npc_spriteRow = npc_row
         self.npc_spriteCol = npc_col
         self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(npc_row, npc_col)
@@ -208,6 +213,8 @@ class MapaWindow(arcade.Window):
         self.npc_sprite.nombre = "NPC"
         self.npc_sprite.ingresos = 0
         self.npc_sprite.reputacion = 70  # Igual que el jugador inicial
+        if not hasattr(self.npc_sprite, "peso_total"):
+            self.npc_sprite.peso_total = 0
         # No mover ni actualizar: sprite estático
         self.npc_list.append(self.npc_sprite)
 
@@ -219,6 +226,16 @@ class MapaWindow(arcade.Window):
         self.npc_moving = False  # Para controlar si el NPC se está moviendo (para resistencia)
         self.npc_pedido_activo = None  # Pedido actual del NPC
         self.npc_action_timer = 0  # Temporizador para acciones periódicas
+        # Ruta/objetivo del NPC para pathfinding
+        self.npc_path = []
+        self.npc_goal = None
+        # Movimiento suave del NPC (igual a la velocidad del jugador)
+        self.npc_move_speed = self.move_speed
+        self.npc_target_row = self.npc_sprite.row
+        self.npc_target_col = self.npc_sprite.col
+        self.npc_target_x = self.npc_sprite.center_x
+        self.npc_target_y = self.npc_sprite.center_y
+        self.npc_smooth_moving = False
 
     # --- Popup de cargar partida ---
     def mostrar_popup_cargar(self):
@@ -496,7 +513,6 @@ class MapaWindow(arcade.Window):
             'pedido_current': self.pedido_actual.id if self.pedido_actual else None,
             'pedido_activo_entrega': self.pedido_activo_para_entrega.id if self.pedido_activo_para_entrega else None,
             'pedidos_completados': self.pedidos_completados,
-            'meta_cumplida': self.meta_cumplida,
             # No guardamos pickups/dropoffs completos (se recrean en restaurar)
         }
 
@@ -558,122 +574,29 @@ class MapaWindow(arcade.Window):
             # Restaurar pedidos
             self.pedidos_activos = {pid: self.pedidos_dict[pid] for pid in estado.get('pedidos_activos', []) if pid in self.pedidos_dict}
             self.pedidos_pendientes = [self.pedidos_dict[pid] for pid in estado.get('pedidos_pendientes', []) if pid in self.pedidos_dict]
-            pid_actual = estado.get('pedido_current', None)
-            self.pedido_actual = self.pedidos_dict.get(pid_actual)
-            pid_entrega = estado.get('pedido_activo_entrega', None)
-            self.pedido_activo_para_entrega = self.pedidos_dict.get(pid_entrega)
-
-            # Recrear pickups y dropoffs basados en pedidos activos
-            self._recrear_pickups_dropoffs()
-
-            # Detener movimiento actual
-            self.moving = False
-            self.active_direction = None
-
-            self.agregar_notificacion("Estado anterior restaurado.", arcade.color.CYAN)
-            print(f"[UNDO] Deshecho paso. Stack restante: {len(self.undo_stack)}")
-
-            # Re-chequear fin de juego después de undo
-            self.check_game_end()
-
+            pid_actual = estado.get('pedido_actual', None)
+            self.pedido_actual = self.pedidos_dict[pid_actual] if pid_actual and pid_actual in self.pedidos_dict else None
+            # Restaurar pickups y dropoffs
+            self.pickup_list = arcade.SpriteList()
+            for info in estado.get('pickups', []):
+                s = arcade.Sprite("assets/pickup.png", scale=0.8)
+                s.center_x = info['center_x']
+                s.center_y = info['center_y']
+                s.pedido_id = info['pedido_id']
+                self.pickup_list.append(s)
+            self.dropoff_list = arcade.SpriteList()
+            for info in estado.get('dropoffs', []):
+                s = arcade.Sprite("assets/dropoff.png", scale=0.8)
+                s.center_x = info['center_x']
+                s.center_y = info['center_y']
+                s.pedido_id = info['pedido_id']
+                self.dropoff_list.append(s)
         except Exception as e:
-            print(f"[ERROR] Fallo en undo: {e}")
-            self.agregar_notificacion("Error al deshacer. Intenta de nuevo.", arcade.color.RED)
-            # Opcional: No pop el stack si falla, para reintentar
-            self.undo_stack.append(ultimo_snapshot)  # Re-agrega si falló
-
-    def _recrear_pickups_dropoffs(self):
-        """Recrea sprites de pickup/dropoff basados en pedidos activos/pendientes."""
-        self.pickup_list = arcade.SpriteList()
-        self.dropoff_list = arcade.SpriteList()
-    
-        # Para pedidos activos (pickups pendientes, si no en inventario)
-        for pedido in self.pedidos_activos.values():
-            if pedido.id not in self.player_sprite.pedidos_ids():  # Ya recogido? No recrear pickup
-                pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
-                dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
-                self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
-    
-        # Para pedidos en inventario (solo dropoffs)
-        for pid in self.player_sprite.pedidos_ids():
-            pedido = self.pedidos_dict.get(pid)
-            if pedido:
-                dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
-                dropoff_sprite = arcade.Sprite("assets/dropoff.png", scale=0.8)
-                dropoff_sprite.center_x = dropoff_x
-                dropoff_sprite.center_y = dropoff_y
-                dropoff_sprite.pedido_id = pid
-                self.dropoff_list.append(dropoff_sprite)
-
-    def draw_popup_puntajes(self):
-        ancho, alto = 500, 400
-        x = self.window_width // 2 - ancho // 2
-        y = self.window_height // 2 - alto // 2
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
-        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.GOLD, 3)
-
-        arcade.draw_text("🏆 Marcadores 🏆",
-                         x + ancho / 2, y + alto - 45,
-                         arcade.color.GOLD, 24, bold=True, anchor_x="center")
-        header_y = y + alto - 90
-        arcade.draw_text("#", x + 50, header_y, arcade.color.WHITE, 16, bold=True, anchor_x="center")
-        arcade.draw_text("Nombre", x + ancho / 2, header_y, arcade.color.WHITE, 16, bold=True, anchor_x="center")
-        arcade.draw_text("Puntaje", x + ancho - 90, header_y, arcade.color.WHITE, 16, bold=True, anchor_x="center")
-        
-        arcade.draw_line(x + 30, header_y - 15, x + ancho - 30, header_y - 15, arcade.color.WHITE, 1)
-
-        if hasattr(self, 'popup_puntajes') and self.popup_puntajes:
-            for i, p in enumerate(self.popup_puntajes[:10]):
-                nombre = p['nombre']
-                score = p['score']
-                color_fila = arcade.color.GOLD if i == 0 else arcade.color.WHITE
-                fila_y = header_y - 45 - i * 28
-
-                arcade.draw_text(f"{i+1}.", x + 50, fila_y, color_fila, 16, anchor_x="center")
-                arcade.draw_text(nombre, x + ancho / 2, fila_y, color_fila, 16, anchor_x="center")
-                arcade.draw_text(f"{score:,}", x + ancho - 50, fila_y, color_fila, 16, anchor_x="right")
-        else:
-            arcade.draw_text("No hay puntajes guardados.",
-                             x + ancho / 2, y + alto / 2,
-                             arcade.color.LIGHT_GRAY, 16, anchor_x="center")
-        arcade.draw_text("Presiona [ESC] para cerrar",
-                         x + ancho / 2, y + 25,
-                         arcade.color.LIGHT_GRAY, 12, anchor_x="center")
-        
-        
-    def pedir_nombre_popup(self):
-        self.nombre_popup_activo = True
-        self.nombre_jugador = ""
-
-    def draw_nombre_popup(self):
-        ancho, alto = 450, 180
-        x = self.window_width // 2 - ancho // 2
-        y = self.window_height // 2 - alto // 2
-
-        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
-        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
-        
-        arcade.draw_text("Ingresa tu nombre",
-                         x + ancho / 2, y + alto - 40,
-                         arcade.color.WHITE, 20, bold=True, anchor_x="center")
-
-        input_box_x = x + 40
-        input_box_y = y + alto - 95
-        input_box_w = ancho - 80
-        input_box_h = 40
-        arcade.draw_lbwh_rectangle_filled(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.BLACK)
-        arcade.draw_lbwh_rectangle_outline(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.WHITE, 1)
-
-        cursor = "|" if math.sin(self.tiempo_global * 10) > 0 else " "
-        
-        texto_a_mostrar = self.nombre_jugador + cursor
-        arcade.draw_text(texto_a_mostrar,
-                 input_box_x + 10, input_box_y + input_box_h // 2, 
-                 arcade.color.WHITE, 18, anchor_x="left", anchor_y="center") 
-        arcade.draw_text("Presiona [Enter] para continuar",
-                         x + ancho / 2, y + 25,
-                         arcade.color.LIGHT_GREEN, 14, anchor_x="center")
-        
+            print(f"[ERROR] Fallo en cargar_de_slot: {e}")
+        finally:
+            self.slot_cargar_seleccionado = slot
+            self.popup_cargar_activo = False
+            self.undo_stack.clear()  # Limpia undo al cargar (nuevo estado)
 
     def guardar_puntaje_si_termina(self):
         """
@@ -1276,7 +1199,7 @@ class MapaWindow(arcade.Window):
             else:
                 self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
             return
-        #Deshacer movimiento con 'U'
+        #Deshacer movimiento with 'U'
         if key == arcade.key.U:
             if self.game_over or self.nombre_popup_activo or self.popup_guardar_activo or self.popup_cargar_activo or self.mostrar_inventario_popup or self.mostrar_pedido or self.mostrar_meta_popup:
                 return  
@@ -1398,7 +1321,6 @@ class MapaWindow(arcade.Window):
                             return nueva_row, nueva_col
         
         return row, col
-    
     
     def crear_pedido(self, pickup_x, pickup_y, dropoff_x, dropoff_y, pedido_id):
         pickup_sprite = arcade.Sprite("assets/pickup.png", scale=0.8)
@@ -1581,7 +1503,7 @@ class MapaWindow(arcade.Window):
                         
                         if (0 <= dropoff_row < ROWS and 0 <= dropoff_col < COLS and 
                             mapa[dropoff_row][dropoff_col] == "B"):
-                            
+
                             celda_accesible_row, celda_accesible_col = self.encontrar_celda_accesible_mas_cercana(dropoff_row, dropoff_col)
                             
                             if (self.player_sprite.row == celda_accesible_row and 
@@ -1647,8 +1569,7 @@ class MapaWindow(arcade.Window):
         self.check_game_end()
 
         self.actualizar_npc(delta_time)
-
-
+        self._actualizar_movimiento_npc(delta_time)
 
     def check_game_end(self):
         """Verifica si el juego terminó por victoria o derrota."""
@@ -1730,117 +1651,345 @@ class MapaWindow(arcade.Window):
 
 
     def actualizar_npc(self, delta_time):
-        """Actualiza el NPC: movimiento, pickups, dropoffs, etc."""
-        if not self.npc_difficulty:
+        """Actualiza el NPC: movimiento, elección y acciones de pedido."""
+        # No recalcular mientras se anima un paso
+        if getattr(self, "npc_smooth_moving", False):
             return
-        # Temporizador para acciones periódicas (cada 1s)
-        if not hasattr(self, 'npc_action_timer'):
-            self.npc_action_timer = 0
+        if not self.npc_difficulty:
+            # Asignar dificultad por defecto para evitar estado inerte
+            self.npc_difficulty = "Fácil"
+            print("[NPC DEBUG] Dificultad por defecto aplicada: Fácil")
+        self._sync_npc_position()
+        intervalo = 0.2 if self.npc_difficulty == "Fácil" else 0.5
         self.npc_action_timer += delta_time
-        if self.npc_action_timer < 1.0:
+        if self.npc_action_timer < intervalo:
             return
         self.npc_action_timer = 0
-        # Actualizar resistencia del NPC (igual que el jugador)
-        self.npc_sprite.actualizar_resistencia(delta_time, self.npc_moving, self.npc_sprite.peso_total, self.clima.condicion, self.clima.intensidad)
-        # Elegir pedido si no tiene uno activo
-        if not hasattr(self, 'npc_pedido_activo') or not self.npc_pedido_activo:
-            self.npc_pedido_activo = self.elegir_pedido_npc()
-        # Mover NPC basado en dificultad
-        if self.npc_pedido_activo:
-            # Determinar objetivo: recoger si no tiene el pedido, entregar si lo tiene
-            tiene_pedido = self.npc_sprite.tiene_pedido(self.npc_pedido_activo.id)
-            objetivo_pos = self.npc_pedido_activo.coord_entregar if tiene_pedido else self.npc_pedido_activo.coord_recoger
-            nueva_pos = self.calcular_movimiento_npc(objetivo_pos)
+        try:
+            self.npc_sprite.actualizar_resistencia(
+                delta_time,
+                self.npc_moving,
+                getattr(self.npc_sprite, "peso_total", 0),
+                self.clima.condicion,
+                self.clima.intensidad
+            )
+            if not self.npc_pedido_activo:
+                pedido = self.elegir_pedido_npc()
+                if pedido:
+                    self.npc_pedido_activo = pedido
+                    if pedido in self.pedidos_pendientes:
+                        self.pedidos_pendientes.remove(pedido)
+                    self.pedidos_activos[pedido.id] = pedido
+                    pedido.tiempo_expiracion = self.tiempo_global + TIEMPO_PARA_RECOGER
+                    px, py = self.celda_a_pixeles(*pedido.coord_recoger)
+                    dx, dy = self.celda_a_pixeles(*pedido.coord_entregar)
+                    self.crear_pedido(px, py, dx, dy, pedido.id)
+                    print(f"[NPC DEBUG] Pedido asignado {pedido.id}")
+            nueva_pos = None
+            if self.npc_difficulty == "Fácil":
+                nueva_pos = self.movimiento_aleatorio_npc()
+            else:
+                if self.npc_pedido_activo:
+                    tiene = self.npc_tiene_pedido(self.npc_sprite, self.npc_pedido_activo.id)
+                    objetivo = tuple(self.npc_pedido_activo.coord_entregar if tiene else self.npc_pedido_activo.coord_recoger)
+                    obj_r, obj_c = objetivo
+                    if 0 <= obj_r < ROWS and 0 <= obj_c < COLS and mapa[obj_r][obj_c] == "B":
+                        obj_r, obj_c = self.encontrar_celda_accesible_mas_cercana(obj_r, obj_c)
+                        objetivo = (obj_r, obj_c)
+                    start = (self.npc_spriteRow, self.npc_spriteCol)
+                    if self.npc_goal != objetivo or not self.npc_path:
+                        self.npc_path = self.npc_build_path_a_star(start, objetivo)
+                        self.npc_goal = objetivo
+                        print(f"[NPC DEBUG] Nueva ruta hacia {objetivo} pasos={len(self.npc_path)}")
+                    if self.npc_path:
+                        nueva_pos = self.npc_path.pop(0)
+                    else:
+                        nueva_pos = self.calcular_movimiento_npc(objetivo)
+                else:
+                    # Sin pedido: moverse aleatorio para no quedar estático
+                    nueva_pos = self.movimiento_aleatorio_npc()
             if nueva_pos and nueva_pos != (self.npc_spriteRow, self.npc_spriteCol):
-                self.npc_spriteRow, self.npc_spriteCol = nueva_pos
-                self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(*nueva_pos)
-                self.npc_moving = True  # Para resistencia
-        # Verificar pickups/dropoffs (igual que el jugador)
-        self.verificar_interacciones_npc()
-        # Reset movimiento
-        self.npc_moving = False
-    def tiene_pedido(self, pedido_id):
-        """Verifica si el repartidor tiene un pedido específico en su inventario."""
-        nodo = self.inventario.inicio
-        while nodo:
-            if nodo.pedido.id == pedido_id:
-                return True
-            nodo = nodo.siguiente
-        return False
+                dr = nueva_pos[0] - self.npc_spriteRow
+                dc = nueva_pos[1] - self.npc_spriteCol
+                if dr == -1:
+                    self.npc_sprite.angle = 270
+                    self.npc_sprite.scale_x = abs(self.npc_sprite.scale_x)  # Mirar arriba, escala positiva
+                elif dr == 1:
+                    self.npc_sprite.angle = 90
+                    self.npc_sprite.scale_x = abs(self.npc_sprite.scale_x)  # Mirar abajo, escala positiva
+                elif dc == -1:
+                    self.npc_sprite.angle = 0
+                    self.npc_sprite.scale_x = -abs(self.npc_sprite.scale_x)  # Mirar izquierda
+                elif dc == 1:
+                    self.npc_sprite.angle = 0
+                    self.npc_sprite.scale_x = abs(self.npc_sprite.scale_x)   # Mirar derecha
+                # Iniciar movimiento suave al siguiente tile
+                self.npc_target_row, self.npc_target_col = nueva_pos
+                self.npc_target_x, self.npc_target_y = self.celda_a_pixeles(*nueva_pos)
+                self.npc_smooth_moving = True
+                self.npc_moving = True
+            self.verificar_interacciones_npc()
+        except Exception as e:
+            print(f"[NPC WARN] Fallo actualizar_npc: {e}")
+        finally:
+            if not getattr(self, "npc_smooth_moving", False):
+                self.npc_moving = False
+
+    def _actualizar_movimiento_npc(self, delta_time):
+        """Interpolación de posición del NPC, misma velocidad base que el jugador."""
+        if not self.npc_smooth_moving:
+            return
+        dx = self.npc_target_x - self.npc_sprite.center_x
+        dy = self.npc_target_y - self.npc_sprite.center_y
+        dist = (dx * dx + dy * dy) ** 0.5
+
+        # Multiplicadores (clima y superficie) similares al jugador
+        mult_clima = self.clima.multiplicadorVelocidad
+        if self.clima.condicion != "clear":
+            mult_clima *= (1 - self.clima.intensidad * 0.5)
+        mult_clima = max(mult_clima, 0.1)
+
+        mult_surface_actual = self.obtener_multiplicador_superficie(self.npc_sprite.row, self.npc_sprite.col)
+        mult_surface_dest = self.obtener_multiplicador_superficie(self.npc_target_row, self.npc_target_col)
+        mult_surface = (mult_surface_actual + mult_surface_dest) / 2.0
+        if mult_surface <= 0:
+            mult_surface = 0.01
+
+        velocidad = self.npc_move_speed * mult_clima * mult_surface * delta_time
+
+        if dist <= velocidad:
+            # Llegó al tile destino
+            self.npc_sprite.center_x = self.npc_target_x
+            self.npc_sprite.center_y = self.npc_target_y
+            self.npc_spriteRow = self.npc_target_row
+            self.npc_spriteCol = self.npc_target_col
+            self.npc_sprite.row = self.npc_spriteRow
+            self.npc_sprite.col = self.npc_spriteCol
+            self.npc_smooth_moving = False
+            self.npc_moving = False
+            # Intentar interacción (pickup/dropoff) al llegar
+            self.verificar_interacciones_npc()
+        else:
+            self.npc_sprite.center_x += velocidad * dx / dist
+            self.npc_sprite.center_y += velocidad * dy / dist
+
+        # Actualizar resistencia durante el movimiento
+        try:
+            self.npc_sprite.actualizar_resistencia(
+                delta_time,
+                True,
+                getattr(self.npc_sprite, "peso_total", 0),
+                self.clima.condicion,
+                self.clima.intensidad
+            )
+        except Exception:
+            pass
+
+    def elegir_pedido_npc(self):
+        """
+        Selecciona un pedido disponible según dificultad.
+        Retorna None si no hay pedidos.
+        """
+        if not self.pedidos_pendientes:
+            return None
+        # Seleccionar también pedidos futuros para empezar a moverse anticipadamente
+        disponibles = list(self.pedidos_pendientes)
+        if not disponibles:
+            return None
+        if self.npc_difficulty == "Fácil":
+            return random.choice(disponibles)
+        if self.npc_difficulty == "Normal":
+            return max(disponibles, key=lambda p: (p.pago) / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1))
+        return max(disponibles, key=lambda p: (p.pago * 1.25 + p.peso * 0.1) / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1))
+
+    def movimiento_aleatorio_npc(self):
+        """
+        Devuelve una celda vecina válida (no edificio) al azar para el NPC.
+        Si no hay vecinos válidos, permanece en su celda actual.
+        """
+        cur = (self.npc_spriteRow, self.npc_spriteCol)
+        vecinos = self._npc_neighbors(cur)
+        if not vecinos:
+            return cur
+        return random.choice(vecinos)
+
+    def calcular_movimiento_npc(self, objetivo_pos):
+        """
+        Movimiento simple hacia el objetivo (row,col) evitando edificios.
+        Fallback: se queda si no hay mejora.
+        """
+        cur_r, cur_c = self.npc_spriteRow, self.npc_spriteCol
+        tgt_r, tgt_c = objetivo_pos
+        # Ajustar si objetivo es edificio
+        if 0 <= tgt_r < ROWS and 0 <= tgt_c < COLS and mapa[tgt_r][tgt_c] == "B":
+            tgt_r, tgt_c = self.encontrar_celda_accesible_mas_cercana(tgt_r, tgt_c)
+        objetivo = (tgt_r, tgt_c)
+        if (cur_r, cur_c) == objetivo:
+            return (cur_r, cur_c)
+        base_dist = self._distancia_manhattan((cur_r, cur_c), objetivo)
+        candidatos = [
+            (cur_r - 1, cur_c),
+            (cur_r + 1, cur_c),
+            (cur_r, cur_c - 1),
+            (cur_r, cur_c + 1),
+        ]
+        validos = [(r, c) for r, c in candidatos
+                   if 0 <= r < ROWS and 0 <= c < COLS and mapa[r][c] != "B"]
+        if not validos:
+            return (cur_r, cur_c)
+        # Elegir el vecino que reduce más la distancia Manhattan
+        mejor = (cur_r, cur_c)
+        mejor_dist = base_dist
+        for v in validos:
+            d = self._distancia_manhattan(v, objetivo)
+            if d < mejor_dist:
+                mejor = v
+                mejor_dist = d
+        return mejor
+
+    def _distancia_manhattan(self, pos1, pos2):
+        """Calcula la distancia Manhattan entre dos posiciones (fila, columna)."""
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
     def npc_tiene_pedido(self, repartidor, pedido_id):
+        """Retorna True si el repartidor (NPC) ya tiene el pedido en su inventario."""
         nodo = repartidor.inventario.inicio
         while nodo:
             if nodo.pedido.id == pedido_id:
                 return True
             nodo = nodo.siguiente
         return False
-    def elegir_pedido_npc(self):
-        """Elige un pedido disponible basado en dificultad."""
-        disponibles = [p for p in self.pedidos_pendientes if self.tiempo_global >= p.release_time]
-        if not disponibles:
-            return None
-        if self.npc_difficulty == "Fácil":
-            return random.choice(disponibles) if disponibles else None
-        elif self.npc_difficulty in ["Normal", "Difícil"]:
-            # Elegir el de mayor payout / menor distancia
-            mejor = max(disponibles, key=lambda p: p.pago / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1))
-            return mejor
-        return None
 
-    def distancia_manhattan(self, pos1, pos2):
-        """Calcula la distancia de Manhattan entre dos posiciones."""
-        row1, col1 = pos1
-        row2, col2 = pos2
-        return abs(row1 - row2) + abs(col1 - col2)
-    def _distancia_manhattan(self, pos1, pos2):
-        """Calculates the Manhattan distance between two positions."""
-        row1, col1 = pos1
-        row2, col2 = pos2
-        return abs(row1 - row2) + abs(col1 - col2)
-
-    def calcular_movimiento_npc(self, objetivo_pos):
-        """Calcula el siguiente movimiento basado en dificultad."""
-        npc_pos = (self.npc_spriteRow, self.npc_spriteCol)
-        
-        # Calculate the next step towards the target position
-        target_row, target_col = objetivo_pos
-        current_row, current_col = npc_pos
-
-        # Determine the direction to move (Manhattan distance)
-        if current_row < target_row:
-            next_pos = (current_row + 1, current_col)
-        elif current_row > target_row:
-            next_pos = (current_row - 1, current_col)
-        elif current_col < target_col:
-            next_pos = (current_row, current_col + 1)
-        elif current_col > target_col:
-            next_pos = (current_row, current_col - 1)
-        else:
-            next_pos = npc_pos  # Already at the target
-
-        # Ensure the next position is not a building
-        if 0 <= next_pos[0] < ROWS and 0 <= next_pos[1] < COLS and mapa[next_pos[0]][next_pos[1]] != "B":
-            return next_pos
-        return npc_pos  # Stay in place if the next position is invalid
-    
     def verificar_interacciones_npc(self):
-        """Verifica pickups y dropoffs para el NPC."""
+        """Pickups y dropoffs del NPC (versión consolidada)."""
         if not self.npc_pedido_activo:
             return
-        # Pickups
-        for pickup in self.pickup_list:
-            if pickup.pedido_id == self.npc_pedido_activo.id and self.npc_spriteRow == self.npc_pedido_activo.coord_recoger[0] and self.npc_spriteCol == self.npc_pedido_activo.coord_recoger[1]:
-                if self.npc_sprite.pickup(self.npc_pedido_activo, self.total_time):
+        pedido = self.npc_pedido_activo
+        for pickup in list(self.pickup_list):
+            if pickup.pedido_id == pedido.id and (self.npc_spriteRow, self.npc_spriteCol) == tuple(pedido.coord_recoger):
+                if self.npc_sprite.pickup(pedido, self.total_time):
                     pickup.remove_from_sprite_lists()
-                    if self.npc_pedido_activo.id in self.pedidos_activos:
-                        del self.pedidos_activos[self.npc_pedido_activo.id]
-
-        # Dropoffs
-        for dropoff in self.dropoff_list:
-            if dropoff.pedido_id == self.npc_pedido_activo.id and self.npc_spriteRow == self.npc_pedido_activo.coord_entregar[0] and self.npc_spriteCol == self.npc_pedido_activo.coord_entregar[1]:
-                mensajes = self.npc_sprite.dropoff(self.npc_pedido_activo.id, self.total_time)
+                    if pedido.id in self.pedidos_activos:
+                        del self.pedidos_activos[pedido.id]
+                    # Recalcular ruta ahora hacia el dropoff
+                    self.npc_path = []
+                    self.npc_goal = None
+                    print(f"[NPC DEBUG] Pedido recogido {pedido.id}, recalculando hacia dropoff.")
+        for dropoff in list(self.dropoff_list):
+            if dropoff.pedido_id == pedido.id and (self.npc_spriteRow, self.npc_spriteCol) == tuple(pedido.coord_entregar):
+                mensajes = self.npc_sprite.dropoff(pedido.id, self.total_time)
                 if mensajes:
-                    self.npc_pedido_activo = None  # Completado
+                    self.npc_pedido_activo = None
+                    self.pedidos_completados += 1
+                    # Limpiar ruta al completar
+                    self.npc_path = []
+                    self.npc_goal = None
+                    print(f"[NPC DEBUG] Pedido entregado {pedido.id}.")
                 dropoff.remove_from_sprite_lists()
 
-    
+    def _sync_npc_position(self):
+        """Mantiene sincronizadas las coordenadas auxiliares del NPC."""
+        self.npc_spriteRow = self.npc_sprite.row
+        self.npc_spriteCol = self.npc_sprite.col
+
+    # --- A* para NPC ---
+    def _npc_neighbors(self, pos):
+        r, c = pos
+        cand = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
+        return [(nr, nc) for nr, nc in cand
+                if 0 <= nr < ROWS and 0 <= nc < COLS and mapa[nr][nc] != "B"]
+
+    def _npc_cell_cost(self, pos):
+        # Costo por superficie (inverso al multiplicador)
+        t = mapa[pos[0]][pos[1]]
+        surf_mult = SURFACE_WEIGHTS.get(t, 1.0)
+        surf_cost = 1.0 / max(surf_mult, 0.01)
+        # Costo esperado por clima (inverso de la velocidad esperada)
+        base = max(self.clima.multiplicadorVelocidad, 0.1)
+        if self.clima.condicion == "clear":
+            clima_cost = 1.0 / base
+        else:
+            p_slow = max(0.0, min(0.8, 0.3 + 0.5 * self.clima.intensidad))
+            slow_mult = base * (1 - 0.5 * self.clima.intensidad)
+            fast_mult = base
+            clima_cost = p_slow * (1.0 / max(slow_mult, 0.05)) + (1 - p_slow) * (1.0 / max(fast_mult, 0.05))
+        return surf_cost * clima_cost
+
+    def npc_build_path_a_star(self, start, goal):
+        """Devuelve lista de celdas desde el siguiente paso a goal (incluido). Vacía si no hay ruta."""
+        if start == goal:
+            return []
+        h = lambda p: abs(p[0] - goal[0]) + abs(p[1] - goal[1])
+        open_heap = []
+        heapq.heappush(open_heap, (h(start), 0.0, start))
+        came_from = {}
+        g_score = {start: 0.0}
+        closed = set()
+        while open_heap:
+            _, gcur, cur = heapq.heappop(open_heap)
+            if cur in closed:
+                continue
+            if cur == goal:
+                # reconstruir camino
+                path = []
+                p = cur
+                while p in came_from:
+                    path.append(p)
+                    p = came_from[p]
+                path.reverse()
+                if path and path[0] == start:
+                    path = path[1:]
+                return path
+            closed.add(cur)
+            for nb in self._npc_neighbors(cur):
+                tentative = gcur + self._npc_cell_cost(nb)
+                if nb not in g_score or tentative < g_score[nb]:
+                    g_score[nb] = tentative
+                    came_from[nb] = cur
+                    heapq.heappush(open_heap, (tentative + h(nb), tentative, nb))
+        return []
+
+    # --- Popup nombre (restaurado) ---
+    def pedir_nombre_popup(self):
+        self.nombre_popup_activo = True
+        self.nombre_jugador = ""
+
+    def draw_nombre_popup(self):
+        ancho, alto = 450, 180
+        x = self.window_width // 2 - ancho // 2
+        y = self.window_height // 2 - alto // 2
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        arcade.draw_text("Ingresa tu nombre", x + ancho / 2, y + alto - 40,
+                         arcade.color.WHITE, 20, bold=True, anchor_x="center")
+        input_box_x = x + 40
+        input_box_y = y + alto - 95
+        input_box_w = ancho - 80
+        input_box_h = 40
+        arcade.draw_lbwh_rectangle_filled(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.BLACK)
+        arcade.draw_lbwh_rectangle_outline(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.WHITE, 1)
+        cursor = "|" if math.sin(getattr(self, "tiempo_global", 0) * 10) > 0 else " "
+        texto_a_mostrar = self.nombre_jugador + cursor
+        arcade.draw_text(texto_a_mostrar, input_box_x + 10, input_box_y + input_box_h // 2,
+                         arcade.color.WHITE, 18, anchor_x="left", anchor_y="center")
+        arcade.draw_text("Presiona [Enter] para continuar",
+                         x + ancho / 2, y + 25,
+                         arcade.color.LIGHT_GREEN, 14, anchor_x="center")
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        arcade.draw_text("Ingresa tu nombre", x + ancho / 2, y + alto - 40,
+                         arcade.color.WHITE, 20, bold=True, anchor_x="center")
+        input_box_x = x + 40
+        input_box_y = y + alto - 95
+        input_box_w = ancho - 80
+        input_box_h = 40
+        arcade.draw_lbwh_rectangle_filled(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.BLACK)
+        arcade.draw_lbwh_rectangle_outline(input_box_x, input_box_y, input_box_w, input_box_h, arcade.color.WHITE, 1)
+        cursor = "|" if math.sin(getattr(self, "tiempo_global", 0) * 10) > 0 else " "
+        texto_a_mostrar = self.nombre_jugador + cursor
+        arcade.draw_text(texto_a_mostrar, input_box_x + 10, input_box_y + input_box_h // 2,
+                         arcade.color.WHITE, 18, anchor_x="left", anchor_y="center")
+        arcade.draw_text("Presiona [Enter] para continuar",
+                         x + ancho / 2, y + 25,
+                         arcade.color.LIGHT_GREEN, 14, anchor_x="center")
+

@@ -759,6 +759,71 @@ class MapaWindow(arcade.Window):
             multiline = True, width=140
         )
 
+    def draw_bot_hud(self):
+        """Dibuja un HUD pequeño para las estadísticas del bot en el lado izquierdo"""
+        if not (self.npc_habilitado and self.npc_sprite):
+            return
+            
+        bot_hud_width = 145  
+        bot_hud_height = 120
+        bot_hud_x = self.width - bot_hud_width - 10  
+        bot_hud_y = 20  
+        hud_font_size = 10
+        hud_padding = 8
+        
+        arcade.draw_lbwh_rectangle_filled(
+            bot_hud_x, bot_hud_y, bot_hud_width, bot_hud_height,
+            arcade.color.WHITE
+        )
+        arcade.draw_lbwh_rectangle_outline(
+            bot_hud_x, bot_hud_y, bot_hud_width, bot_hud_height,
+            arcade.color.BLACK, 2 
+        )
+        
+        
+        arcade.draw_text(
+            "BOT", 
+            bot_hud_x + bot_hud_width // 2, bot_hud_y + bot_hud_height - 8,
+            arcade.color.RED, hud_font_size + 2, 
+            anchor_x="center", anchor_y="top"
+        )
+        
+        bot_pedidos = []
+        nodo = self.npc_sprite.inventario.inicio
+        while nodo:
+            bot_pedidos.append(nodo.pedido.id)
+            nodo = nodo.siguiente
+        bot_pedidos_text = f"Pedidos: {', '.join(bot_pedidos) if bot_pedidos else 'Ninguno'}"
+        bot_peso_text = f"Peso: {self.npc_sprite.inventario.peso_total():.1f}/{self.npc_sprite.inventario.peso_maximo:.1f}"
+        bot_ingresos_text = f"Ingresos: ${self.npc_sprite.ingresos:.2f}"
+        bot_reputacion_text = f"Reputación: {self.npc_sprite.reputacion}"
+        
+        stats_y = bot_hud_y + bot_hud_height - 25
+        text_x = bot_hud_x + hud_padding
+        
+        # Dibujar estadísticas del bot
+        arcade.draw_text(bot_pedidos_text, text_x, stats_y, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        arcade.draw_text(bot_peso_text, text_x, stats_y - 15, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        arcade.draw_text(bot_ingresos_text, text_x, stats_y - 30, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        arcade.draw_text(bot_reputacion_text, text_x, stats_y - 45, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        
+        # Resistencia del bot
+        bot_resistencia_actual = self.npc_sprite.get_resistencia_actual()
+        bot_resistencia_text = f"Resistencia: {int(bot_resistencia_actual)}/100"
+        arcade.draw_text(bot_resistencia_text, text_x, stats_y - 60, arcade.color.BLACK, hud_font_size, anchor_y="top")
+        
+        # Barra de resistencia del bot 
+        bot_bar_x = text_x
+        bot_bar_y = stats_y - 90  
+        bot_bar_width = 85  
+        bot_bar_height = 8
+        arcade.draw_lbwh_rectangle_filled(bot_bar_x, bot_bar_y, bot_bar_width, bot_bar_height, arcade.color.GRAY)
+        
+        bot_fill_color = arcade.color.GREEN if bot_resistencia_actual > 30 else (arcade.color.YELLOW if bot_resistencia_actual > 10 else arcade.color.RED)
+        bot_fill_width = (bot_resistencia_actual / 100.0) * bot_bar_width
+        arcade.draw_lbwh_rectangle_filled(bot_bar_x, bot_bar_y, bot_fill_width, bot_bar_height, bot_fill_color)
+        arcade.draw_lbwh_rectangle_outline(bot_bar_x, bot_bar_y, bot_bar_width, bot_bar_height, arcade.color.BLACK, 1)
+
     def draw_inventario_popup(self):
         """Dibuja el menú de selección de pedidos a partir de una lista temporal."""
         if not self.mostrar_inventario_popup:
@@ -1086,6 +1151,8 @@ class MapaWindow(arcade.Window):
         if self.mostrar_inventario_popup:
             self.draw_inventario_popup()
             return
+        
+        self.draw_bot_hud()
 
 
     def restart_game(self):
@@ -1805,13 +1872,22 @@ class MapaWindow(arcade.Window):
             return
         self.npc_action_timer = 0
         try:
+            if hasattr(self, 'npc_previous_position'):
+                npc_actual_moving = (self.npc_sprite.center_x != self.npc_previous_position[0] or 
+                                   self.npc_sprite.center_y != self.npc_previous_position[1])
+            else:
+                npc_actual_moving = False
+            
+            self.npc_previous_position = (self.npc_sprite.center_x, self.npc_sprite.center_y)
+            
             self.npc_sprite.actualizar_resistencia(
                 delta_time,
-                self.npc_moving,
-                getattr(self.npc_sprite, "peso_total", 0),
+                npc_actual_moving,  
+                self.npc_sprite.peso_total,
                 self.clima.condicion,
                 self.clima.intensidad
             )
+            
             # Verificar si el pedido actual sigue siendo válido
             if self.npc_pedido_activo:
                 # Si ya recogimos el pedido o ya no hay pickup, buscar nuevo objetivo
@@ -1880,17 +1956,20 @@ class MapaWindow(arcade.Window):
                         print(f"[NPC DEBUG] Nueva ruta A* desde {start} hacia {objetivo} pasos={len(self.npc_path)}")
                     if self.npc_path:
                         nueva_pos = self.npc_path.pop(0)
-                        print(f"[NPC DEBUG] Siguiente paso A*: {nueva_pos}")
+                        # print(f"[NPC DEBUG] Siguiente paso A*: {nueva_pos}")
                     else:
                         nueva_pos = self.calcular_movimiento_npc(objetivo)
-                        print(f"[NPC DEBUG] A* falló, usando movimiento simple hacia {objetivo}")
+                        # print(f"[NPC DEBUG] A* falló, usando movimiento simple hacia {objetivo}")
                 else:  # Normal
                     nueva_pos = self.calcular_movimiento_npc(objetivo)
-                    print(f"[NPC DEBUG] Movimiento simple desde {start} hacia {objetivo} -> {nueva_pos}")
+                    # print(f"[NPC DEBUG] Movimiento simple desde {start} hacia {objetivo} -> {nueva_pos}")
             else:
                 # Sin pedido: moverse aleatorio para no quedar estático
                 nueva_pos = self.movimiento_aleatorio_npc()
             if nueva_pos and nueva_pos != (self.npc_spriteRow, self.npc_spriteCol):
+                
+                self.npc_last_position = (self.npc_spriteRow, self.npc_spriteCol)
+                
                 dr = nueva_pos[0] - self.npc_spriteRow
                 dc = nueva_pos[1] - self.npc_spriteCol
                 if dr == -1:
@@ -1913,9 +1992,7 @@ class MapaWindow(arcade.Window):
             self.verificar_interacciones_npc()
         except Exception as e:
             print(f"[NPC WARN] Fallo actualizar_npc: {e}")
-        finally:
-            if not getattr(self, "npc_smooth_moving", False):
-                self.npc_moving = False
+            self.npc_moving = False
 
     def _actualizar_movimiento_npc(self, delta_time):
         """
@@ -2174,17 +2251,26 @@ class MapaWindow(arcade.Window):
         # Filtrar movimientos válidos
         for r, c in candidatos:
             if 0 <= r < ROWS and 0 <= c < COLS and mapa[r][c] != "B":
+                
+                if hasattr(self, 'npc_last_position') and (r, c) == self.npc_last_position:
+                    continue
                 return (r, c)
         
-        # Si no puede moverse hacia el objetivo, buscar cualquier movimiento válido
         todos_candidatos = [
             (cur_r - 1, cur_c),
             (cur_r + 1, cur_c),
             (cur_r, cur_c - 1),
             (cur_r, cur_c + 1),
         ]
+        
         validos = [(r, c) for r, c in todos_candidatos
                    if 0 <= r < ROWS and 0 <= c < COLS and mapa[r][c] != "B"]
+        
+       
+        if hasattr(self, 'npc_last_position'):
+            validos_sin_previa = [(r, c) for r, c in validos if (r, c) != self.npc_last_position]
+            if validos_sin_previa:
+                validos = validos_sin_previa
         
         if validos:
             # Elegir el que reduce más la distancia Manhattan

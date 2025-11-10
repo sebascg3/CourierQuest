@@ -207,7 +207,6 @@ class MapaWindow(arcade.Window):
         # Inicializa coordenadas/estado del NPC
         self.npc_sprite.row = npc_row
         self.npc_sprite.col = npc_col
-        self.npc_sprite.row = npc_row
         self.npc_sprite.inventario = Inventario.Inventario()
         self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(npc_row, npc_col)
         # Marca opcional para identificarlo
@@ -232,11 +231,13 @@ class MapaWindow(arcade.Window):
         self.npc_goal = None
         # Movimiento suave del NPC (igual a la velocidad del jugador)
         self.npc_move_speed = self.move_speed
-        self.npc_target_row = self.npc_sprite.row
-        self.npc_target_col = self.npc_sprite.col
+        self.npc_target_row = npc_row
+        self.npc_target_col = npc_col
         self.npc_target_x = self.npc_sprite.center_x
         self.npc_target_y = self.npc_sprite.center_y
         self.npc_smooth_moving = False
+        self.npc_spriteRow = npc_row
+        self.npc_spriteCol = npc_col
 
     # --- Popup de cargar partida ---
     def mostrar_popup_cargar(self):
@@ -1233,16 +1234,22 @@ class MapaWindow(arcade.Window):
         if self.mostrar_pedido and self.pedido_actual:
             if key == arcade.key.A: 
                 pedido = self.pedido_actual
-                print(f"Pedido {pedido.id} aceptado")
-                self.pedidos_activos[pedido.id] = pedido 
-                pedido.tiempo_expiracion = self.tiempo_global + TIEMPO_PARA_RECOGER
-                
-                #Mantener pickups y dropoffs en su posición original
-                pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
-                dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
-                self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
-                self.mostrar_pedido = False
-                self.pedido_actual = None
+                # Solo permitir aceptar si el pickup aún existe
+                existe_pickup = any(s.pedido_id == pedido.id for s in self.pickup_list)
+                if not existe_pickup:
+                    print(f"Pedido {pedido.id} aceptado")
+                    self.pedidos_activos[pedido.id] = pedido 
+                    pedido.tiempo_expiracion = self.tiempo_global + TIEMPO_PARA_RECOGER
+                   
+                    pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
+                    dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
+                    self.crear_pedido(pickup_x, pickup_y, dropoff_x, dropoff_y, pedido.id)
+                    self.mostrar_pedido = False
+                    self.pedido_actual = None
+                else:
+                    self.agregar_notificacion("Pedido ya fue recogido por otro repartidor.", arcade.color.ORANGE_RED)
+                    self.mostrar_pedido = False
+                    self.pedido_actual = None
             elif key == arcade.key.R:  
                 print(f"Pedido {self.pedido_actual.id} rechazado")
                 self.mostrar_pedido = False
@@ -1324,16 +1331,36 @@ class MapaWindow(arcade.Window):
         return row, col
     
     def crear_pedido(self, pickup_x, pickup_y, dropoff_x, dropoff_y, pedido_id):
+        """Crea sprites de pickup/dropoff. Si la celda original es un edificio,
+        coloca el sprite en la celda accesible más cercana."""
+        try:
+            p_row, p_col = self.pixeles_a_celda(pickup_x, pickup_y)
+            if 0 <= p_row < ROWS and 0 <= p_col < COLS and mapa[p_row][p_col] == "B":
+                p_row, p_col = self.encontrar_celda_accesible_mas_cercana(p_row, p_col)
+                pickup_x, pickup_y = self.celda_a_pixeles(p_row, p_col)
+        except Exception:
+            pass
+
+        try:
+            d_row, d_col = self.pixeles_a_celda(dropoff_x, dropoff_y)
+            if 0 <= d_row < ROWS and 0 <= d_col < COLS and mapa[d_row][d_col] == "B":
+                d_row, d_col = self.encontrar_celda_accesible_mas_cercana(d_row, d_col)
+                dropoff_x, dropoff_y = self.celda_a_pixeles(d_row, d_col)
+        except Exception:
+            pass
+
         pickup_sprite = arcade.Sprite("assets/pickup.png", scale=0.8)
         pickup_sprite.center_x = pickup_x
         pickup_sprite.center_y = pickup_y
         pickup_sprite.pedido_id = pedido_id
         self.pickup_list.append(pickup_sprite)
+
         dropoff_sprite = arcade.Sprite("assets/dropoff.png", scale=0.8)
         dropoff_sprite.center_x = dropoff_x
         dropoff_sprite.center_y = dropoff_y
         dropoff_sprite.pedido_id = pedido_id
         self.dropoff_list.append(dropoff_sprite)
+
 
     def cargar_pedidos(self):
         # --- intenta API, si falla usa backup ---
@@ -1661,7 +1688,7 @@ class MapaWindow(arcade.Window):
             self.npc_difficulty = "Fácil"
             print("[NPC DEBUG] Dificultad por defecto aplicada: Fácil")
         self._sync_npc_position()
-        intervalo = 0.2 if self.npc_difficulty == "Fácil" else 0.5
+        intervalo = 0.05 if self.npc_difficulty == "Fácil" else 0.1  # Intervalos más pequeños para movimiento fluido
         self.npc_action_timer += delta_time
         if self.npc_action_timer < intervalo:
             return
@@ -1674,41 +1701,84 @@ class MapaWindow(arcade.Window):
                 self.clima.condicion,
                 self.clima.intensidad
             )
+            # Verificar si el pedido actual sigue siendo válido
+            if self.npc_pedido_activo:
+                # Si ya recogimos el pedido o ya no hay pickup, buscar nuevo objetivo
+                tiene_pedido = self.npc_tiene_pedido(self.npc_sprite, self.npc_pedido_activo.id)
+                existe_pickup = any(s.pedido_id == self.npc_pedido_activo.id for s in self.pickup_list)
+                
+                if not tiene_pedido and not existe_pickup:
+                    self.npc_pedido_activo = None
+                    self.npc_path = []
+                    self.npc_goal = None
+                    print(f"[NPC DEBUG] Pedido perdido, buscando nuevo objetivo.")
+
             if not self.npc_pedido_activo:
                 pedido = self.elegir_pedido_npc()
                 if pedido:
                     self.npc_pedido_activo = pedido
-                    if pedido in self.pedidos_pendientes:
-                        self.pedidos_pendientes.remove(pedido)
-                    self.pedidos_activos[pedido.id] = pedido
-                    pedido.tiempo_expiracion = self.tiempo_global + TIEMPO_PARA_RECOGER
-                    px, py = self.celda_a_pixeles(*pedido.coord_recoger)
-                    dx, dy = self.celda_a_pixeles(*pedido.coord_entregar)
-                    self.crear_pedido(px, py, dx, dy, pedido.id)
                     print(f"[NPC DEBUG] Pedido asignado {pedido.id}")
+            
+            # Check if NPC can move (resistance check like player)
+            if not self.npc_sprite.puede_moverse():
+                print(f"[NPC DEBUG] NPC exhausted, resting...")
+                # Stop movement if exhausted
+                if self.npc_smooth_moving:
+                    self.npc_smooth_moving = False
+                    self.npc_moving = False
+                return
+            
             nueva_pos = None
             if self.npc_difficulty == "Fácil":
                 nueva_pos = self.movimiento_aleatorio_npc()
-            else:
-                if self.npc_pedido_activo:
-                    tiene = self.npc_tiene_pedido(self.npc_sprite, self.npc_pedido_activo.id)
+            elif self.npc_pedido_activo:  # Normal o Difícil con pedido
+                tiene = self.npc_tiene_pedido(self.npc_sprite, self.npc_pedido_activo.id)
+                
+                # Buscar la posición REAL del sprite (pickup o dropoff)
+                objetivo = None
+                if tiene:
+                    # Buscar dropoff
+                    for dropoff in self.dropoff_list:
+                        if dropoff.pedido_id == self.npc_pedido_activo.id:
+                            drop_row, drop_col = self.pixeles_a_celda(dropoff.center_x, dropoff.center_y)
+                            objetivo = (drop_row, drop_col)
+                            break
+                else:
+                    # Buscar pickup
+                    for pickup in self.pickup_list:
+                        if pickup.pedido_id == self.npc_pedido_activo.id:
+                            pick_row, pick_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
+                            objetivo = (pick_row, pick_col)
+                            break
+                
+                # Si no encontramos el sprite, usar coordenadas del pedido como fallback
+                if objetivo is None:
                     objetivo = tuple(self.npc_pedido_activo.coord_entregar if tiene else self.npc_pedido_activo.coord_recoger)
                     obj_r, obj_c = objetivo
                     if 0 <= obj_r < ROWS and 0 <= obj_c < COLS and mapa[obj_r][obj_c] == "B":
                         obj_r, obj_c = self.encontrar_celda_accesible_mas_cercana(obj_r, obj_c)
                         objetivo = (obj_r, obj_c)
-                    start = (self.npc_spriteRow, self.npc_spriteCol)
+                
+                start = (self.npc_spriteRow, self.npc_spriteCol)
+                
+                if self.npc_difficulty == "Difícil":
+                    
                     if self.npc_goal != objetivo or not self.npc_path:
                         self.npc_path = self.npc_build_path_a_star(start, objetivo)
                         self.npc_goal = objetivo
-                        print(f"[NPC DEBUG] Nueva ruta hacia {objetivo} pasos={len(self.npc_path)}")
+                        print(f"[NPC DEBUG] Nueva ruta A* desde {start} hacia {objetivo} pasos={len(self.npc_path)}")
                     if self.npc_path:
                         nueva_pos = self.npc_path.pop(0)
+                        print(f"[NPC DEBUG] Siguiente paso A*: {nueva_pos}")
                     else:
                         nueva_pos = self.calcular_movimiento_npc(objetivo)
-                else:
-                    # Sin pedido: moverse aleatorio para no quedar estático
-                    nueva_pos = self.movimiento_aleatorio_npc()
+                        print(f"[NPC DEBUG] A* falló, usando movimiento simple hacia {objetivo}")
+                else:  # Normal
+                    nueva_pos = self.calcular_movimiento_npc(objetivo)
+                    print(f"[NPC DEBUG] Movimiento simple desde {start} hacia {objetivo} -> {nueva_pos}")
+            else:
+                # Sin pedido: moverse aleatorio para no quedar estático
+                nueva_pos = self.movimiento_aleatorio_npc()
             if nueva_pos and nueva_pos != (self.npc_spriteRow, self.npc_spriteCol):
                 dr = nueva_pos[0] - self.npc_spriteRow
                 dc = nueva_pos[1] - self.npc_spriteCol
@@ -1738,7 +1808,7 @@ class MapaWindow(arcade.Window):
 
     def _actualizar_movimiento_npc(self, delta_time):
         """
-        Interpolación de posición del NPC, ajustando la velocidad según la dificultad.
+        Interpolación de posición del NPC usando exactamente la misma lógica que el jugador.
         """
         if not self.npc_smooth_moving:
             return
@@ -1747,27 +1817,44 @@ class MapaWindow(arcade.Window):
         dy = self.npc_target_y - self.npc_sprite.center_y
         dist = (dx ** 2 + dy ** 2) ** 0.5
     
-        # Multiplicadores (clima y superficie) similares al jugador
+        # Multiplicador de clima (igual al jugador)
         mult_clima = self.clima.multiplicadorVelocidad
         if self.clima.condicion != "clear":
             mult_clima *= (1 - self.clima.intensidad * 0.5)
         mult_clima = max(mult_clima, 0.1)
-    
+
+        # Reducción por peso (igual al jugador)
+        peso_total = self.npc_sprite.inventario.peso_total()
+        peso_maximo = self.npc_sprite.inventario.peso_maximo
+        speed_reduction_factor = 0.8
+        reduction = (peso_total / peso_maximo) * speed_reduction_factor if peso_maximo > 0 else 0
+        mult_peso = max(1.0 - reduction, 0.2)
+
+        # Multiplicador de resistencia (igual al jugador)
+        mult_resistencia = self.npc_sprite.resistencia_obj.get_multiplicador_velocidad()
+
+        # Multiplicador de superficie (igual al jugador)
         mult_surface_actual = self.obtener_multiplicador_superficie(self.npc_sprite.row, self.npc_sprite.col)
         mult_surface_dest = self.obtener_multiplicador_superficie(self.npc_target_row, self.npc_target_col)
         mult_surface = (mult_surface_actual + mult_surface_dest) / 2.0
         if mult_surface <= 0:
             mult_surface = 0.01
     
-        # Ajustar velocidad base del NPC
-        velocidad_base = self.npc_move_speed
-        if self.npc_difficulty == "Difícil":
-            velocidad_base *= 2  # Velocidad 2x en dificultad difícil
+        # Velocidad base igual al jugador
+        velocidad_base = self.move_speed  # Misma velocidad que el jugador
+        
+        # Aplicar todos los multiplicadores exactamente como el jugador
+        velocidad_actual_por_frame = (
+            velocidad_base *
+            mult_clima *
+            mult_peso *
+            mult_resistencia *
+            mult_surface *
+            delta_time
+        )
     
-        velocidad = velocidad_base * mult_clima * mult_surface * delta_time
-    
-        if dist <= velocidad:
-            # Llegó al tile destino
+        if dist < velocidad_actual_por_frame:  
+            
             self.npc_sprite.center_x = self.npc_target_x
             self.npc_sprite.center_y = self.npc_target_y
             self.npc_spriteRow = self.npc_target_row
@@ -1779,31 +1866,35 @@ class MapaWindow(arcade.Window):
             # Intentar interacción (pickup/dropoff) al llegar
             self.verificar_interacciones_npc()
         else:
-            self.npc_sprite.center_x += velocidad * dx / dist
-            self.npc_sprite.center_y += velocidad * dy / dist
+            # Movimiento interpolado igual al jugador
+            self.npc_sprite.center_x += velocidad_actual_por_frame * dx / dist
+            self.npc_sprite.center_y += velocidad_actual_por_frame * dy / dist
     
-        # Actualizar resistencia durante el movimiento
-        try:
-            self.npc_sprite.actualizar_resistencia(
-                delta_time,
-                True,
-                getattr(self.npc_sprite, "peso_total", 0),
-                self.clima.condicion,
-                self.clima.intensidad
-            )
-        except Exception:
-            pass
+        # Actualizar resistencia durante el movimiento (igual al jugador)
+        self.npc_sprite.actualizar_resistencia(
+            delta_time,
+            True,  # está moviendo
+            self.npc_sprite.inventario.peso_total(),
+            self.clima.condicion,
+            self.clima.intensidad
+        )
 
     def elegir_pedido_npc(self):
         """
         Selecciona un pedido disponible según dificultad.
-        Retorna None si no hay pedidos.
+        Ahora solo busca entre los pedidos que YA fueron aceptados por el jugador
+        (que tienen pickups en el mundo).
         """
-        if not self.pedidos_pendientes:
-            return None
-    
-        # Seleccionar también pedidos futuros para empezar a moverse anticipadamente
-        disponibles = list(self.pedidos_pendientes)
+        # Buscar pedidos que tienen pickup disponible (fueron aceptados por el jugador)
+        disponibles = []
+        for pickup in self.pickup_list:
+            pedido_id = pickup.pedido_id
+            if pedido_id in self.pedidos_dict:
+                pedido = self.pedidos_dict[pedido_id]
+                # Solo considerar si no está en el inventario de nadie
+                if not self.npc_tiene_pedido(self.player_sprite, pedido_id) and not self.npc_tiene_pedido(self.npc_sprite, pedido_id):
+                    disponibles.append(pedido)
+        
         if not disponibles:
             return None
     
@@ -1824,15 +1915,29 @@ class MapaWindow(arcade.Window):
             mejor_costo = float("inf")
     
             for pedido in disponibles:
-                # Calcular el costo de la ruta más corta hacia el punto de recogida
-                costo_ruta = self._dijkstra_cost((self.npc_spriteRow, self.npc_spriteCol), pedido.coord_recoger)
+                # Buscar la posición real del sprite de pickup
+                pickup_pos = None
+                for pickup in self.pickup_list:
+                    if pickup.pedido_id == pedido.id:
+                        pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
+                        pickup_pos = (pickup_row, pickup_col)
+                        break
+                
+                if pickup_pos is None:
+                    continue  # Skip si no encontramos el sprite
+                
+                # Calcular el costo de la ruta más corta hacia el pickup real
+                costo_ruta = self._dijkstra_cost((self.npc_spriteRow, self.npc_spriteCol), pickup_pos)
+                print(f"[NPC DEBUG] Dijkstra para pedido {pedido.id}: costo={costo_ruta}")
+                
                 if costo_ruta is not None:
                     # Evaluar el pedido basado en el pago y el costo de la ruta
-                    costo_total = costo_ruta / (pedido.pago * 1.25 + pedido.peso * 0.1)
+                    costo_total = costo_ruta / (pedido.pago + 0.1)  # Simplificado
                     if costo_total < mejor_costo:
                         mejor_costo = costo_total
                         mejor_pedido = pedido
     
+            print(f"[NPC DEBUG] Dijkstra eligió pedido: {mejor_pedido.id if mejor_pedido else 'None'}")
             return mejor_pedido
     
         return None
@@ -1844,14 +1949,31 @@ class MapaWindow(arcade.Window):
         Retorna el costo total o None si no hay ruta.
         """
         import heapq
+        
+        print(f"[NPC DEBUG] Dijkstra: desde {start} hasta {goal}")
+        
+        # Validar entrada
+        if start == goal:
+            return 0.0
+            
+        if not (0 <= start[0] < ROWS and 0 <= start[1] < COLS):
+            print(f"[NPC DEBUG] Dijkstra: start {start} fuera de límites")
+            return None
+            
+        if not (0 <= goal[0] < ROWS and 0 <= goal[1] < COLS):
+            print(f"[NPC DEBUG] Dijkstra: goal {goal} fuera de límites")
+            return None
     
         # Inicializar estructuras de datos
         open_heap = []
         heapq.heappush(open_heap, (0, start))  # (costo acumulado, nodo actual)
         costos = {start: 0}
         visitados = set()
+        max_iterations = ROWS * COLS * 2  # Evitar bucles infinitos
+        iterations = 0
     
-        while open_heap:
+        while open_heap and iterations < max_iterations:
+            iterations += 1
             costo_actual, nodo_actual = heapq.heappop(open_heap)
     
             if nodo_actual in visitados:
@@ -1859,6 +1981,7 @@ class MapaWindow(arcade.Window):
     
             # Si llegamos al objetivo, devolvemos el costo
             if nodo_actual == goal:
+                print(f"[NPC DEBUG] Dijkstra: ruta encontrada, costo={costo_actual}, iteraciones={iterations}")
                 return costo_actual
     
             visitados.add(nodo_actual)
@@ -1876,6 +1999,7 @@ class MapaWindow(arcade.Window):
                     heapq.heappush(open_heap, (costo_vecino, vecino))
     
         # Si no se encuentra una ruta, devolver None
+        print(f"[NPC DEBUG] Dijkstra: sin ruta encontrada después de {iterations} iteraciones")
         return None
 
     def movimiento_aleatorio_npc(self):
@@ -1892,7 +2016,7 @@ class MapaWindow(arcade.Window):
     def calcular_movimiento_npc(self, objetivo_pos):
         """
         Movimiento simple hacia el objetivo (row,col) evitando edificios.
-        Fallback: se queda si no hay mejora.
+        Mejorado para evitar que se quede pegado.
         """
         cur_r, cur_c = self.npc_spriteRow, self.npc_spriteCol
         tgt_r, tgt_c = objetivo_pos
@@ -1902,26 +2026,63 @@ class MapaWindow(arcade.Window):
         objetivo = (tgt_r, tgt_c)
         if (cur_r, cur_c) == objetivo:
             return (cur_r, cur_c)
-        base_dist = self._distancia_manhattan((cur_r, cur_c), objetivo)
-        candidatos = [
+        
+        # Calcular diferencias
+        diff_r = tgt_r - cur_r
+        diff_c = tgt_c - cur_c
+        
+        # Priorizar movimiento en la dirección con mayor diferencia
+        candidatos = []
+        if abs(diff_r) >= abs(diff_c):
+            # Mover primero verticalmente
+            if diff_r > 0:
+                candidatos.append((cur_r + 1, cur_c))
+            elif diff_r < 0:
+                candidatos.append((cur_r - 1, cur_c))
+            # Luego horizontalmente
+            if diff_c > 0:
+                candidatos.append((cur_r, cur_c + 1))
+            elif diff_c < 0:
+                candidatos.append((cur_r, cur_c - 1))
+        else:
+            # Mover primero horizontalmente
+            if diff_c > 0:
+                candidatos.append((cur_r, cur_c + 1))
+            elif diff_c < 0:
+                candidatos.append((cur_r, cur_c - 1))
+            # Luego verticalmente
+            if diff_r > 0:
+                candidatos.append((cur_r + 1, cur_c))
+            elif diff_r < 0:
+                candidatos.append((cur_r - 1, cur_c))
+        
+        # Filtrar movimientos válidos
+        for r, c in candidatos:
+            if 0 <= r < ROWS and 0 <= c < COLS and mapa[r][c] != "B":
+                return (r, c)
+        
+        # Si no puede moverse hacia el objetivo, buscar cualquier movimiento válido
+        todos_candidatos = [
             (cur_r - 1, cur_c),
             (cur_r + 1, cur_c),
             (cur_r, cur_c - 1),
             (cur_r, cur_c + 1),
         ]
-        validos = [(r, c) for r, c in candidatos
+        validos = [(r, c) for r, c in todos_candidatos
                    if 0 <= r < ROWS and 0 <= c < COLS and mapa[r][c] != "B"]
-        if not validos:
-            return (cur_r, cur_c)
-        # Elegir el vecino que reduce más la distancia Manhattan
-        mejor = (cur_r, cur_c)
-        mejor_dist = base_dist
-        for v in validos:
-            d = self._distancia_manhattan(v, objetivo)
-            if d < mejor_dist:
-                mejor = v
-                mejor_dist = d
-        return mejor
+        
+        if validos:
+            # Elegir el que reduce más la distancia Manhattan
+            mejor = validos[0]
+            mejor_dist = self._distancia_manhattan(mejor, objetivo)
+            for v in validos[1:]:
+                d = self._distancia_manhattan(v, objetivo)
+                if d < mejor_dist:
+                    mejor = v
+                    mejor_dist = d
+            return mejor
+        
+        return (cur_r, cur_c)
 
     def _distancia_manhattan(self, pos1, pos2):
         """Calcula la distancia Manhattan entre dos posiciones (fila, columna)."""
@@ -1946,32 +2107,48 @@ class MapaWindow(arcade.Window):
         if not self.npc_pedido_activo:
             return
         pedido = self.npc_pedido_activo
+
+        # Pickup - verificar si el NPC está en la misma posición que el sprite de pickup
         for pickup in list(self.pickup_list):
-            if pickup.pedido_id == pedido.id and (self.npc_spriteRow, self.npc_spriteCol) == tuple(pedido.coord_recoger):
-                if self.npc_sprite.pickup(pedido, self.total_time):
-                    pickup.remove_from_sprite_lists()
-                    if pedido.id in self.pedidos_activos:
-                        del self.pedidos_activos[pedido.id]
-                    # Recalcular ruta ahora hacia el dropoff
-                    self.npc_path = []
-                    self.npc_goal = None
-                    print(f"[NPC DEBUG] Pedido recogido {pedido.id}, recalculando hacia dropoff.")
+            if pickup.pedido_id == pedido.id:
+                pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
+                if (self.npc_spriteRow, self.npc_spriteCol) == (pickup_row, pickup_col):
+                    print(f"[NPC DEBUG] Intentando recoger pedido {pedido.id}")
+                    if self.npc_sprite.pickup(pedido, self.total_time):
+                        pickup.remove_from_sprite_lists()
+                        if pedido.id in self.pedidos_activos:
+                            del self.pedidos_activos[pedido.id]
+                        # Recalcular ruta ahora hacia el dropoff
+                        self.npc_path = []
+                        self.npc_goal = None
+                        print(f"[NPC DEBUG] Pedido recogido {pedido.id}, recalculando hacia dropoff.")
+
+        # Dropoff - verificar si el NPC está en la misma posición que el sprite de dropoff
         for dropoff in list(self.dropoff_list):
-            if dropoff.pedido_id == pedido.id and (self.npc_spriteRow, self.npc_spriteCol) == tuple(pedido.coord_entregar):
-                mensajes = self.npc_sprite.dropoff(pedido.id, self.total_time)
-                if mensajes:
-                    self.npc_pedido_activo = None
-                    self.pedidos_completados += 1
-                    # Limpiar ruta al completar
-                    self.npc_path = []
-                    self.npc_goal = None
-                    print(f"[NPC DEBUG] Pedido entregado {pedido.id}.")
-                dropoff.remove_from_sprite_lists()
+            if dropoff.pedido_id == pedido.id:
+                dropoff_row, dropoff_col = self.pixeles_a_celda(dropoff.center_x, dropoff.center_y)
+                if (self.npc_spriteRow, self.npc_spriteCol) == (dropoff_row, dropoff_col):
+                    print(f"[NPC DEBUG] Intentando entregar pedido {pedido.id}")
+                    mensajes = self.npc_sprite.dropoff(pedido.id, self.total_time)
+                    if mensajes:
+                        self.npc_pedido_activo = None
+                        self.pedidos_completados += 1
+                        # Limpiar ruta al completar
+                        self.npc_path = []
+                        self.npc_goal = None
+                        print(f"[NPC DEBUG] Pedido entregado {pedido.id}.")
+                    dropoff.remove_from_sprite_lists()
 
     def _sync_npc_position(self):
         """Mantiene sincronizadas las coordenadas auxiliares del NPC."""
-        self.npc_spriteRow = self.npc_sprite.row
-        self.npc_spriteCol = self.npc_sprite.col
+        if hasattr(self, 'npc_sprite') and self.npc_sprite:
+            if not hasattr(self, 'npc_spriteRow') or not hasattr(self, 'npc_spriteCol'):
+                # Inicializar si no existen
+                self.npc_spriteRow = getattr(self.npc_sprite, 'row', 0)
+                self.npc_spriteCol = getattr(self.npc_sprite, 'col', 0)
+            else:
+                self.npc_spriteRow = self.npc_sprite.row
+                self.npc_spriteCol = self.npc_sprite.col
 
     # --- A* para NPC ---
     def _npc_neighbors(self, pos):
@@ -1981,20 +2158,27 @@ class MapaWindow(arcade.Window):
                 if 0 <= nr < ROWS and 0 <= nc < COLS and mapa[nr][nc] != "B"]
 
     def _npc_cell_cost(self, pos):
-        # Costo por superficie (inverso al multiplicador)
-        t = mapa[pos[0]][pos[1]]
-        surf_mult = SURFACE_WEIGHTS.get(t, 1.0)
-        surf_cost = 1.0 / max(surf_mult, 0.01)
-        # Costo esperado por clima (inverso de la velocidad esperada)
-        base = max(self.clima.multiplicadorVelocidad, 0.1)
-        if self.clima.condicion == "clear":
-            clima_cost = 1.0 / base
-        else:
-            p_slow = max(0.0, min(0.8, 0.3 + 0.5 * self.clima.intensidad))
-            slow_mult = base * (1 - 0.5 * self.clima.intensidad)
-            fast_mult = base
-            clima_cost = p_slow * (1.0 / max(slow_mult, 0.05)) + (1 - p_slow) * (1.0 / max(fast_mult, 0.05))
-        return surf_cost * clima_cost
+        """Calcula el costo de moverse a una celda específica."""
+        try:
+            tipo_celda = mapa[pos[0]][pos[1]]
+            surf_mult = SURFACE_WEIGHTS.get(tipo_celda, 1.0)
+            
+            if surf_mult > 0:
+                surf_cost = 1.0 / surf_mult
+            else:
+                surf_cost = 10.0 
+            
+            clima_mult = max(self.clima.multiplicadorVelocidad, 0.1)
+            if self.clima.condicion != "clear":
+                clima_mult *= max(0.5, 1.0 - self.clima.intensidad * 0.3)
+            
+            clima_cost = 1.0 / clima_mult
+            
+            total_cost = surf_cost + clima_cost
+            return total_cost
+            
+        except Exception as e:
+            return 10.0  
 
     def npc_build_path_a_star(self, start, goal):
         """Devuelve lista de celdas desde el siguiente paso a goal (incluido). Vacía si no hay ruta."""

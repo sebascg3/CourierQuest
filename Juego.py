@@ -3,6 +3,7 @@ import arcade
 import random
 import pyglet
 from datetime import datetime
+import Inventario
 from Pedido import Pedido
 from Repartidor import Repartidor
 from Clima import Clima
@@ -206,8 +207,8 @@ class MapaWindow(arcade.Window):
         # Inicializa coordenadas/estado del NPC
         self.npc_sprite.row = npc_row
         self.npc_sprite.col = npc_col
-        self.npc_spriteRow = npc_row
-        self.npc_spriteCol = npc_col
+        self.npc_sprite.row = npc_row
+        self.npc_sprite.inventario = Inventario.Inventario()
         self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(npc_row, npc_col)
         # Marca opcional para identificarlo
         self.npc_sprite.nombre = "NPC"
@@ -594,7 +595,7 @@ class MapaWindow(arcade.Window):
         except Exception as e:
             print(f"[ERROR] Fallo en cargar_de_slot: {e}")
         finally:
-            self.slot_cargar_seleccionado = slot
+            self.slot_cargar_seleccionado = slot # type: ignore
             self.popup_cargar_activo = False
             self.undo_stack.clear()  # Limpia undo al cargar (nuevo estado)
 
@@ -1736,27 +1737,35 @@ class MapaWindow(arcade.Window):
                 self.npc_moving = False
 
     def _actualizar_movimiento_npc(self, delta_time):
-        """Interpolación de posición del NPC, misma velocidad base que el jugador."""
+        """
+        Interpolación de posición del NPC, ajustando la velocidad según la dificultad.
+        """
         if not self.npc_smooth_moving:
             return
+    
         dx = self.npc_target_x - self.npc_sprite.center_x
         dy = self.npc_target_y - self.npc_sprite.center_y
-        dist = (dx * dx + dy * dy) ** 0.5
-
+        dist = (dx ** 2 + dy ** 2) ** 0.5
+    
         # Multiplicadores (clima y superficie) similares al jugador
         mult_clima = self.clima.multiplicadorVelocidad
         if self.clima.condicion != "clear":
             mult_clima *= (1 - self.clima.intensidad * 0.5)
         mult_clima = max(mult_clima, 0.1)
-
+    
         mult_surface_actual = self.obtener_multiplicador_superficie(self.npc_sprite.row, self.npc_sprite.col)
         mult_surface_dest = self.obtener_multiplicador_superficie(self.npc_target_row, self.npc_target_col)
         mult_surface = (mult_surface_actual + mult_surface_dest) / 2.0
         if mult_surface <= 0:
             mult_surface = 0.01
-
-        velocidad = self.npc_move_speed * mult_clima * mult_surface * delta_time
-
+    
+        # Ajustar velocidad base del NPC
+        velocidad_base = self.npc_move_speed
+        if self.npc_difficulty == "Difícil":
+            velocidad_base *= 2  # Velocidad 2x en dificultad difícil
+    
+        velocidad = velocidad_base * mult_clima * mult_surface * delta_time
+    
         if dist <= velocidad:
             # Llegó al tile destino
             self.npc_sprite.center_x = self.npc_target_x
@@ -1772,7 +1781,7 @@ class MapaWindow(arcade.Window):
         else:
             self.npc_sprite.center_x += velocidad * dx / dist
             self.npc_sprite.center_y += velocidad * dy / dist
-
+    
         # Actualizar resistencia durante el movimiento
         try:
             self.npc_sprite.actualizar_resistencia(
@@ -1792,15 +1801,82 @@ class MapaWindow(arcade.Window):
         """
         if not self.pedidos_pendientes:
             return None
+    
         # Seleccionar también pedidos futuros para empezar a moverse anticipadamente
         disponibles = list(self.pedidos_pendientes)
         if not disponibles:
             return None
+    
         if self.npc_difficulty == "Fácil":
+            # Selección aleatoria
             return random.choice(disponibles)
+    
         if self.npc_difficulty == "Normal":
-            return max(disponibles, key=lambda p: (p.pago) / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1))
-        return max(disponibles, key=lambda p: (p.pago * 1.25 + p.peso * 0.1) / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1))
+            # Selección basada en pago y distancia Manhattan
+            return max(
+                disponibles,
+                key=lambda p: (p.pago) / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1)
+            )
+    
+        if self.npc_difficulty == "Difícil":
+            # Selección basada en Dijkstra (ruta más corta)
+            mejor_pedido = None
+            mejor_costo = float("inf")
+    
+            for pedido in disponibles:
+                # Calcular el costo de la ruta más corta hacia el punto de recogida
+                costo_ruta = self._dijkstra_cost((self.npc_spriteRow, self.npc_spriteCol), pedido.coord_recoger)
+                if costo_ruta is not None:
+                    # Evaluar el pedido basado en el pago y el costo de la ruta
+                    costo_total = costo_ruta / (pedido.pago * 1.25 + pedido.peso * 0.1)
+                    if costo_total < mejor_costo:
+                        mejor_costo = costo_total
+                        mejor_pedido = pedido
+    
+            return mejor_pedido
+    
+        return None
+    
+    
+    def _dijkstra_cost(self, start, goal):
+        """
+        Calcula el costo de la ruta más corta desde 'start' hasta 'goal' usando Dijkstra.
+        Retorna el costo total o None si no hay ruta.
+        """
+        import heapq
+    
+        # Inicializar estructuras de datos
+        open_heap = []
+        heapq.heappush(open_heap, (0, start))  # (costo acumulado, nodo actual)
+        costos = {start: 0}
+        visitados = set()
+    
+        while open_heap:
+            costo_actual, nodo_actual = heapq.heappop(open_heap)
+    
+            if nodo_actual in visitados:
+                continue
+    
+            # Si llegamos al objetivo, devolvemos el costo
+            if nodo_actual == goal:
+                return costo_actual
+    
+            visitados.add(nodo_actual)
+    
+            # Explorar vecinos
+            for vecino in self._npc_neighbors(nodo_actual):
+                if vecino in visitados:
+                    continue
+    
+                # Calcular el costo para llegar al vecino
+                costo_vecino = costo_actual + self._npc_cell_cost(vecino)
+    
+                if vecino not in costos or costo_vecino < costos[vecino]:
+                    costos[vecino] = costo_vecino
+                    heapq.heappush(open_heap, (costo_vecino, vecino))
+    
+        # Si no se encuentra una ruta, devolver None
+        return None
 
     def movimiento_aleatorio_npc(self):
         """
@@ -1851,9 +1927,14 @@ class MapaWindow(arcade.Window):
         """Calcula la distancia Manhattan entre dos posiciones (fila, columna)."""
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
-    def npc_tiene_pedido(self, repartidor, pedido_id):
-        """Retorna True si el repartidor (NPC) ya tiene el pedido en su inventario."""
-        nodo = repartidor.inventario.inicio
+    def npc_tiene_pedido(self, npc_sprite, pedido_id):
+        """
+        Verifica si el NPC tiene un pedido específico en su inventario.
+        :param npc_sprite: El sprite del NPC.
+        :param pedido_id: El ID del pedido a verificar.
+        :return: True si el NPC tiene el pedido, False en caso contrario.
+        """
+        nodo = npc_sprite.inventario.inicio
         while nodo:
             if nodo.pedido.id == pedido_id:
                 return True

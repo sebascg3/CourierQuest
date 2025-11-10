@@ -109,7 +109,13 @@ class MapaWindow(arcade.Window):
         self.hora_inicio_juego_utc = datetime.now(timezone.utc)
         self.meta_ingresos = 1500 
         self.meta_cumplida = False
-        self.mostrar_meta_popup = True
+        
+        self.mostrar_config_bot_popup = True  
+        self.config_bot_opciones = ["Jugar CON Bot", "Jugar SIN Bot"]
+        self.config_bot_seleccion = 0  
+        self.npc_habilitado = True  
+        
+        self.mostrar_meta_popup = False  
         self.mostrar_inventario_popup = False
         self.inventario_seleccion_idx = 0  
         self.pedido_activo_para_entrega = None
@@ -126,8 +132,6 @@ class MapaWindow(arcade.Window):
         icon2 = pyglet.image.load("assets/repartidor.png")
         super().__init__(self.window_width, self.window_height, "Courier Quest",fixed_frame_cap=60, )
         self.set_icon(icon1, icon2) 
-        # Activar popup de nombre usando el método restaurado
-        self.pedir_nombre_popup()
         arcade.set_background_color(arcade.color.WHITE)
         # Estado popup cargar
         self.popup_cargar_activo = False
@@ -238,6 +242,19 @@ class MapaWindow(arcade.Window):
         self.npc_smooth_moving = False
         self.npc_spriteRow = npc_row
         self.npc_spriteCol = npc_col
+
+    def remover_npc(self):
+        """Remueve el NPC del juego cuando se elige jugar sin bot"""
+        if hasattr(self, 'npc_sprite') and self.npc_sprite:
+            self.npc_sprite.remove_from_sprite_lists()
+            self.npc_sprite = None
+        
+        # Limpiar variables del NPC
+        self.npc_pedido_activo = None
+        self.npc_path = []
+        self.npc_goal = None
+        self.npc_smooth_moving = False
+        self.npc_moving = False
 
     # --- Popup de cargar partida ---
     def mostrar_popup_cargar(self):
@@ -816,6 +833,65 @@ class MapaWindow(arcade.Window):
             arcade.draw_lbwh_rectangle_filled(x + ancho - 200, y + 20, 150, 40, arcade.color.DARK_RED)
             arcade.draw_text("[R] Rechazar", x + ancho - 125, y + 40, arcade.color.WHITE, 16, anchor_x="center")
 
+    def draw_config_bot_popup(self):
+        """Dibuja el popup de configuración del bot"""
+        ancho, alto = 500, 350
+        x = self.width // 2 - ancho // 2
+        y = self.height // 2 - alto // 2
+        
+        # Fondo del popup
+        arcade.draw_lbwh_rectangle_filled(x, y, ancho, alto, arcade.color.DARK_SLATE_GRAY)
+        arcade.draw_lbwh_rectangle_outline(x, y, ancho, alto, arcade.color.WHITE, 3)
+        
+        # Título
+        arcade.draw_text(
+            "Configuración del Juego",
+            x + ancho // 2, y + alto - 50,
+            arcade.color.WHITE, 24,
+            anchor_x="center", anchor_y="center", bold=True
+        )
+        
+        arcade.draw_text(
+            "¿Quieres competir contra un bot?",
+            x + ancho // 2, y + alto - 100,
+            arcade.color.CYAN, 18,
+            anchor_x="center", anchor_y="center"
+        )
+        
+        # Opciones
+        for i, opcion in enumerate(self.config_bot_opciones):
+            option_y = y + alto // 2 - (i * 60) + 20
+            color = arcade.color.YELLOW if i == self.config_bot_seleccion else arcade.color.WHITE
+            
+            # Indicador de selección
+            if i == self.config_bot_seleccion:
+                arcade.draw_text("►", x + 120, option_y, arcade.color.YELLOW, 20, anchor_x="center")
+            
+            # Texto de la opción
+            arcade.draw_text(opcion, x + 180, option_y, color, 20, anchor_x="left")
+        
+        # Descripción de la opción seleccionada
+        descripcion = ""
+        if self.config_bot_seleccion == 0:
+            descripcion = "El bot competirá contigo por los mismos paquetes.\nPodrás elegir la dificultad del bot."
+        else:
+            descripcion = "Jugarás solo contra el tiempo.\nSin competencia adicional."
+            
+        arcade.draw_text(
+            descripcion,
+            x + ancho // 2, y + 80,
+            arcade.color.LIGHT_GRAY, 14,
+            anchor_x="center", anchor_y="center",
+            multiline=True, width=ancho-40
+        )
+        
+        # Instrucciones
+        arcade.draw_text(
+            "Usa ↑↓ para navegar, ENTER para confirmar",
+            x + ancho // 2, y + 30,
+            arcade.color.LIGHT_GRAY, 12,
+            anchor_x="center", anchor_y="center"
+        )
 
     def draw_popup_meta(self):
         ancho, alto = 600, 400
@@ -935,6 +1011,12 @@ class MapaWindow(arcade.Window):
 
     def on_draw(self):
         self.clear()
+        
+        # PRIMERO: Popup de configuración del bot
+        if getattr(self, 'mostrar_config_bot_popup', False):
+            self.draw_config_bot_popup()
+            return
+        
         if self.game_over:
             self._draw_end_screen()
             return
@@ -972,15 +1054,16 @@ class MapaWindow(arcade.Window):
                     color = arcade.color.GRAY if tipo == "C" else arcade.color.BLACK
                     arcade.draw_rect_filled(rect, color)
                 arcade.draw_rect_outline(rect, arcade.color.BLACK, 1)
-        # --- NUEVO: dibujar NPC (segundo jugador) ---
-        self.npc_list.draw()
-        # Dibuja etiqueta encima del NPC
-        try:
-            for npc in self.npc_list:
-                arcade.draw_text(getattr(npc, "nombre", ""), npc.center_x, npc.center_y + 24,
-                                 arcade.color.BLACK, 12, anchor_x="center")
-        except Exception:
-            pass
+        # --- NUEVO: dibujar NPC (segundo jugador) solo si está habilitado ---
+        if getattr(self, 'npc_habilitado', True) and hasattr(self, 'npc_sprite') and self.npc_sprite:
+            self.npc_list.draw()
+            # Dibuja etiqueta encima del NPC
+            try:
+                for npc in self.npc_list:
+                    arcade.draw_text(getattr(npc, "nombre", ""), npc.center_x, npc.center_y + 24,
+                                     arcade.color.BLACK, 12, anchor_x="center")
+            except Exception:
+                pass
 
         self.player_list.draw()
         self.pickup_list.draw()
@@ -1056,7 +1139,30 @@ class MapaWindow(arcade.Window):
 
 
     def on_key_press(self, key, modifiers):
-        # --- PRIORIDAD: manejar popup de dificultad primero ---
+        # --- PRIORIDAD 1: manejar popup de configuración del bot PRIMERO ---
+        if getattr(self, 'mostrar_config_bot_popup', False):
+            # navegación
+            if key in (arcade.key.UP, arcade.key.LEFT):
+                self.config_bot_seleccion = (self.config_bot_seleccion - 1) % len(self.config_bot_opciones)
+                return
+            if key in (arcade.key.DOWN, arcade.key.RIGHT):
+                self.config_bot_seleccion = (self.config_bot_seleccion + 1) % len(self.config_bot_opciones)
+                return
+            # confirmar
+            if key == arcade.key.ENTER:
+                self.npc_habilitado = (self.config_bot_seleccion == 0)  # 0 = CON Bot, 1 = SIN Bot
+                self.mostrar_config_bot_popup = False
+                
+                if self.npc_habilitado:
+                    # Si elige CON Bot, mostrar popup de dificultad
+                    self.difficulty_popup_active = True
+                else:
+                    # Si elige SIN Bot, remover el NPC y mostrar popup de meta
+                    self.remover_npc()
+                    self.mostrar_meta_popup = True
+                return
+        
+        # --- PRIORIDAD 2: manejar popup de dificultad segundo ---
         if getattr(self, 'difficulty_popup_active', False):
             # navegación
             if key in (arcade.key.UP, arcade.key.LEFT):
@@ -1083,7 +1189,8 @@ class MapaWindow(arcade.Window):
                     self.npc_sprite.nombre = f"NPC ({self.npc_difficulty})"
                 except Exception:
                     pass
-                self.agregar_notificacion(f"Dificultad NPC: {self.npc_difficulty}", arcade.color.CYAN)
+                # Después de elegir dificultad, mostrar popup de meta
+                self.mostrar_meta_popup = True
                 return
             # cancelar
             if key == arcade.key.ESCAPE:
@@ -1094,6 +1201,8 @@ class MapaWindow(arcade.Window):
 
         if self.mostrar_meta_popup and key == arcade.key.ENTER:
             self.mostrar_meta_popup = False
+            # Después del popup de meta, ir al popup de nombre
+            self.pedir_nombre_popup()
             return
 
         # Verificación de game_over (al inicio, para pausar todo y manejar reinicio)
@@ -1111,9 +1220,7 @@ class MapaWindow(arcade.Window):
                 if self.nombre_jugador.strip():
                     self.nombre_popup_activo = False
                     self.player_sprite.nombre = self.nombre_jugador.strip()
-                    # --- NUEVO: activar selección de dificultad justo después de ingresar nombre ---
-                    self.difficulty_popup_active = True
-                    self.difficulty_selected_idx = 1
+                    # Ya no activar popup de dificultad aquí - se hace antes en la configuración del bot
             elif key == arcade.key.BACKSPACE:
                 self.nombre_jugador = self.nombre_jugador[:-1]
             elif 32 <= key <= 126 and len(self.nombre_jugador) < 16:
@@ -1680,6 +1787,10 @@ class MapaWindow(arcade.Window):
 
     def actualizar_npc(self, delta_time):
         """Actualiza el NPC: movimiento, elección y acciones de pedido."""
+        # No actualizar si no está habilitado o no existe
+        if not getattr(self, 'npc_habilitado', True) or not hasattr(self, 'npc_sprite') or not self.npc_sprite:
+            return
+            
         # No recalcular mientras se anima un paso
         if getattr(self, "npc_smooth_moving", False):
             return
@@ -1810,6 +1921,10 @@ class MapaWindow(arcade.Window):
         """
         Interpolación de posición del NPC usando exactamente la misma lógica que el jugador.
         """
+        # No actualizar si no está habilitado o no existe
+        if not getattr(self, 'npc_habilitado', True) or not hasattr(self, 'npc_sprite') or not self.npc_sprite:
+            return
+            
         if not self.npc_smooth_moving:
             return
     

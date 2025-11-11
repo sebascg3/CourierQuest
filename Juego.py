@@ -1851,14 +1851,13 @@ class MapaWindow(arcade.Window):
     # Instrucciones
         arcade.draw_text("Presiona [ESC] para cerrar o [R] para reiniciar", x + ancho // 2, y + 30, arcade.color.LIGHT_GRAY, 14, anchor_x="center", anchor_y="top")
 
-
     def actualizar_npc(self, delta_time):
         """Actualiza el NPC: movimiento, elección y acciones de pedido."""
         # No actualizar si no está habilitado o no existe
         if not getattr(self, 'npc_habilitado', True) or not hasattr(self, 'npc_sprite') or not self.npc_sprite:
             return
-            
-        # No recalcular mientras se anima un paso
+        
+    # No recalcular mientras se anima un paso
         if getattr(self, "npc_smooth_moving", False):
             return
         if not self.npc_difficulty:
@@ -1874,12 +1873,12 @@ class MapaWindow(arcade.Window):
         try:
             if hasattr(self, 'npc_previous_position'):
                 npc_actual_moving = (self.npc_sprite.center_x != self.npc_previous_position[0] or 
-                                   self.npc_sprite.center_y != self.npc_previous_position[1])
+                               self.npc_sprite.center_y != self.npc_previous_position[1])
             else:
                 npc_actual_moving = False
-            
+        
             self.npc_previous_position = (self.npc_sprite.center_x, self.npc_sprite.center_y)
-            
+        
             self.npc_sprite.actualizar_resistencia(
                 delta_time,
                 npc_actual_moving,  
@@ -1887,13 +1886,13 @@ class MapaWindow(arcade.Window):
                 self.clima.condicion,
                 self.clima.intensidad
             )
-            
-            # Verificar si el pedido actual sigue siendo válido
+        
+        # Verificar si el pedido actual sigue siendo válido
             if self.npc_pedido_activo:
-                # Si ya recogimos el pedido o ya no hay pickup, buscar nuevo objetivo
+            # Si ya recogimos el pedido o ya no hay pickup, buscar nuevo objetivo
                 tiene_pedido = self.npc_tiene_pedido(self.npc_sprite, self.npc_pedido_activo.id)
                 existe_pickup = any(s.pedido_id == self.npc_pedido_activo.id for s in self.pickup_list)
-                
+            
                 if not tiene_pedido and not existe_pickup:
                     self.npc_pedido_activo = None
                     self.npc_path = []
@@ -1905,71 +1904,74 @@ class MapaWindow(arcade.Window):
                 if pedido:
                     self.npc_pedido_activo = pedido
                     print(f"[NPC DEBUG] Pedido asignado {pedido.id}")
-            
-            # Check if NPC can move (resistance check like player)
+        
+        # Check if NPC can move (resistance check like player)
             if not self.npc_sprite.puede_moverse():
                 print(f"[NPC DEBUG] NPC exhausted, resting...")
-                # Stop movement if exhausted
+            # Stop movement if exhausted
                 if self.npc_smooth_moving:
                     self.npc_smooth_moving = False
                     self.npc_moving = False
                 return
-            
+        
             nueva_pos = None
             if self.npc_difficulty == "Fácil":
                 nueva_pos = self.movimiento_aleatorio_npc()
             elif self.npc_pedido_activo:  # Normal o Difícil con pedido
                 tiene = self.npc_tiene_pedido(self.npc_sprite, self.npc_pedido_activo.id)
-                
-                # Buscar la posición REAL del sprite (pickup o dropoff)
+            
+            # Buscar la posición REAL del sprite (pickup o dropoff)
                 objetivo = None
                 if tiene:
-                    # Buscar dropoff
+                # Buscar dropoff
                     for dropoff in self.dropoff_list:
                         if dropoff.pedido_id == self.npc_pedido_activo.id:
                             drop_row, drop_col = self.pixeles_a_celda(dropoff.center_x, dropoff.center_y)
                             objetivo = (drop_row, drop_col)
                             break
                 else:
-                    # Buscar pickup
+                # Buscar pickup
                     for pickup in self.pickup_list:
                         if pickup.pedido_id == self.npc_pedido_activo.id:
                             pick_row, pick_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
                             objetivo = (pick_row, pick_col)
                             break
-                
-                # Si no encontramos el sprite, usar coordenadas del pedido como fallback
+            
+            # Si no encontramos el sprite, usar coordenadas del pedido como fallback
                 if objetivo is None:
                     objetivo = tuple(self.npc_pedido_activo.coord_entregar if tiene else self.npc_pedido_activo.coord_recoger)
                     obj_r, obj_c = objetivo
                     if 0 <= obj_r < ROWS and 0 <= obj_c < COLS and mapa[obj_r][obj_c] == "B":
                         obj_r, obj_c = self.encontrar_celda_accesible_mas_cercana(obj_r, obj_c)
                         objetivo = (obj_r, obj_c)
-                
+            
                 start = (self.npc_spriteRow, self.npc_spriteCol)
-                
+            
                 if self.npc_difficulty == "Difícil":
-                    
+                    self.npc_path = self.npc_build_path_a_star(start, objetivo)
                     if self.npc_goal != objetivo or not self.npc_path:
                         self.npc_path = self.npc_build_path_a_star(start, objetivo)
                         self.npc_goal = objetivo
                         print(f"[NPC DEBUG] Nueva ruta A* desde {start} hacia {objetivo} pasos={len(self.npc_path)}")
                     if self.npc_path:
                         nueva_pos = self.npc_path.pop(0)
-                        # print(f"[NPC DEBUG] Siguiente paso A*: {nueva_pos}")
+                    # print(f"[NPC DEBUG] Siguiente paso A*: {nueva_pos}")
                     else:
                         nueva_pos = self.calcular_movimiento_npc(objetivo)
-                        # print(f"[NPC DEBUG] A* falló, usando movimiento simple hacia {objetivo}")
+                    # print(f"[NPC DEBUG] A* falló, usando movimiento simple hacia {objetivo}")
                 else:  # Normal
                     nueva_pos = self.calcular_movimiento_npc(objetivo)
-                    # print(f"[NPC DEBUG] Movimiento simple desde {start} hacia {objetivo} -> {nueva_pos}")
+                # print(f"[NPC DEBUG] Movimiento simple desde {start} hacia {objetivo} -> {nueva_pos}")
+            elif self.npc_difficulty == "Difícil":
+            # Sin pedido en Difícil: quieto recuperando energía
+                nueva_pos = None
             else:
-                # Sin pedido: moverse aleatorio para no quedar estático
-                nueva_pos = self.movimiento_aleatorio_npc()
+            # Normal sin pedido: moverse aleatorio para no quedar estático
+                nueva_pos = None
             if nueva_pos and nueva_pos != (self.npc_spriteRow, self.npc_spriteCol):
-                
+            
                 self.npc_last_position = (self.npc_spriteRow, self.npc_spriteCol)
-                
+            
                 dr = nueva_pos[0] - self.npc_spriteRow
                 dc = nueva_pos[1] - self.npc_spriteCol
                 if dr == -1:
@@ -1984,7 +1986,7 @@ class MapaWindow(arcade.Window):
                 elif dc == 1:
                     self.npc_sprite.angle = 0
                     self.npc_sprite.scale_x = abs(self.npc_sprite.scale_x)   # Mirar derecha
-                # Iniciar movimiento suave al siguiente tile
+            # Iniciar movimiento suave al siguiente tile
                 self.npc_target_row, self.npc_target_col = nueva_pos
                 self.npc_target_x, self.npc_target_y = self.celda_a_pixeles(*nueva_pos)
                 self.npc_smooth_moving = True
@@ -1993,6 +1995,8 @@ class MapaWindow(arcade.Window):
         except Exception as e:
             print(f"[NPC WARN] Fallo actualizar_npc: {e}")
             self.npc_moving = False
+
+
 
     def _actualizar_movimiento_npc(self, delta_time):
         """

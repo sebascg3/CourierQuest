@@ -16,49 +16,62 @@ import json
 import pickle
 import heapq
 
-CELL_SIZE = 50
-BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"
+# Constantes del juego
+CELL_SIZE = 50  # Tamaño de cada celda en píxeles
+BASE_URL = "https://tigerds-api.kindflower-ccaf48b6.eastus.azurecontainerapps.io"  # URL base para la API del juego
 
-# --- función para cargar backup si falla el API ---
+# --- Función para cargar datos de respaldo si falla la API ---
 def cargar_backup():
+    """
+    Carga datos de respaldo desde un archivo JSON local si la API falla.
+    
+    Returns:
+        dict or None: Los datos de respaldo si existen, None en caso contrario.
+    """
     ruta = os.path.join("data", "backup.json")
     if os.path.exists(ruta):
         with open(ruta, "r", encoding="utf-8") as f:
             return json.load(f)
     return None
 
-# --- city/map ---
+# --- Obtención de datos del mapa de la ciudad ---
 try:
+    # Intenta obtener el mapa de la ciudad desde la API
     city_data = requests.get(f"{BASE_URL}/city/map", timeout=5).json()
 except Exception as e:
+    # Si falla, imprime un mensaje de advertencia y carga desde respaldo
     print(f"[WARN] city/map API failed: {e}")
     backup = cargar_backup()
     if backup and "city_map" in backup:
         city_data = backup["city_map"]
     else:
+        # Si no hay respaldo, lanza error crítico
         raise RuntimeError("No se pudo obtener city/map ni backup.json")
 
+# Extrae datos del mapa: tiles (matriz del mapa), altura y ancho
 data = city_data.get("data", {})
 tiles = data.get("tiles", [])
 height = data.get("height", 0)
 width = data.get("width", 0)
-mapa = tiles
-ROWS = len(mapa)
-COLS = len(mapa[0])
+mapa = tiles  # Matriz que representa el mapa (filas x columnas)
+ROWS = len(mapa)  # Número de filas del mapa
+COLS = len(mapa[0])  # Número de columnas del mapa
 
-TIEMPO_PARA_RECOGER = 30
+TIEMPO_PARA_RECOGER = 30  # Tiempo en segundos para recoger un pedido antes de que expire
 
+# Pesos de superficie para el movimiento: afectan la velocidad en diferentes tipos de terreno
 SURFACE_WEIGHTS = {
-    "C": 1.0,   # Calle / camino
-    "P": 0.5,  # Parque (más lento)
-    "B": 0.0,   # Edificio (intransitable, ya se bloquea antes)
+    "C": 1.0,   # Calle / camino: velocidad normal
+    "P": 0.5,   # Parque: más lento
+    "B": 0.0,   # Edificio: intransitable
 }
 
-
-# --- Clima y Markov ---
+# --- Obtención de datos del clima ---
 try:
+    # Intenta obtener datos del clima desde la API
     weather_data = requests.get(f"{BASE_URL}/city/weather?city=TigerCity&mode=seed", timeout=5).json()
 except Exception as e:
+    # Si falla, carga desde respaldo
     print(f"[WARN] weather API failed: {e}")
     backup = cargar_backup()
     if backup and "weather" in backup:
@@ -66,28 +79,30 @@ except Exception as e:
     else:
         raise RuntimeError("No se pudo obtener weather ni backup.json")
 
+# Extrae información del clima: condiciones y transiciones
 weather_info = weather_data.get("data", {})
-initial_weather = weather_info.get("initial", {})
+initial_weather = weather_info.get("initial", {})  # Clima inicial
+conditions = weather_info.get("conditions", [])  # Lista de condiciones climáticas
+transition = weather_info.get("transition", {})  # Probabilidades de transición entre climas
 
-conditions = weather_info.get("conditions", [])
-transition = weather_info.get("transition", {})
-
-# Normaliza nombres de condiciones
+# Normaliza los nombres de las condiciones climáticas
 cond_names = [c["condition"] if isinstance(c, dict) and "condition" in c 
               else c for c in conditions]
 
-# Convierte el diccionario de transición a matriz cuadrada NxN
+# Construye la matriz de transición NxN para el modelo de Markov
 matrizT = []
 for fila in cond_names:
     fila_probs = []
     trans_row = transition.get(fila, {})
     for col in cond_names:
-        prob = trans_row.get(col, 0.0)
+        prob = trans_row.get(col, 0.0)  # Probabilidad de transición
         fila_probs.append(prob)
     matrizT.append(fila_probs)
 
+# Inicializa el modelo de Markov para el clima
 markov = MarkovClima(cond_names, matrizT)
 
+# Datos de respaldo para guardar y restaurar
 BACKUP_DATA = {
     "city_map": city_data,
     "weather": weather_data,
@@ -95,92 +110,123 @@ BACKUP_DATA = {
 }
 
 def save_backup():
-    """Guarda BACKUP_DATA en data/backup.json."""
+    """
+    Guarda los datos de respaldo en un archivo JSON.
+    """
     try:
-        os.makedirs("data", exist_ok = True)
+        os.makedirs("data", exist_ok=True)  # Crea el directorio si no existe
         ruta = os.path.join("data", "backup.json")
-        with open(ruta, "w", encoding = "utf-8") as f:
-            json.dump(BACKUP_DATA, f, ensure_ascii = False, indent = 2)
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(BACKUP_DATA, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[WARN] No se pudo escribir backup.json: {e}")
 
+# --- Clase principal del juego: ventana del mapa ---
 class MapaWindow(arcade.Window):
+    """
+    Clase principal que maneja la ventana del juego, incluyendo el mapa, jugadores, NPCs, clima, etc.
+    Hereda de arcade.Window.
+    """
     def __init__(self):
+        # Inicializa la hora de inicio del juego en UTC
         self.hora_inicio_juego_utc = datetime.now(timezone.utc)
-        self.meta_ingresos = 1500 
-        self.meta_cumplida = False
+        self.meta_ingresos = 1500  # Meta de ingresos para ganar
+        self.meta_cumplida = False  # Bandera para saber si se cumplió la meta
         
-        self.mostrar_config_bot_popup = True  
-        self.config_bot_opciones = ["Jugar CON Bot", "Jugar SIN Bot"]
-        self.config_bot_seleccion = 0  
-        self.npc_habilitado = True  
+        # Estados para popups de configuración
+        self.mostrar_config_bot_popup = True  # Muestra el popup de configuración del bot al inicio
+        self.config_bot_opciones = ["Jugar CON Bot", "Jugar SIN Bot"]  # Opciones para jugar con o sin NPC
+        self.config_bot_seleccion = 0  # Índice de selección actual
         
-        self.mostrar_meta_popup = False  
-        self.mostrar_inventario_popup = False
-        self.inventario_seleccion_idx = 0  
-        self.pedido_activo_para_entrega = None
-        self.lista_inventario_visible = [] 
-        self.modo_orden = 'prioridad'
-        self.notificaciones = []
-        self.nombre_popup_activo = False
-        self.nombre_jugador = ""
-        self.active_direction = None
+        self.npc_habilitado = True  # Si el NPC está habilitado
+        
+        # Estados para otros popups
+        self.mostrar_meta_popup = False  # Popup de explicación de la meta
+        self.mostrar_inventario_popup = False  # Popup del inventario
+        self.inventario_seleccion_idx = 0  # Índice de selección en el inventario
+        self.pedido_activo_para_entrega = None  # Pedido seleccionado para entrega
+        self.lista_inventario_visible = []  # Lista visible de pedidos en inventario
+        self.modo_orden = 'prioridad'  # Modo de ordenamiento del inventario
+        
+        self.notificaciones = []  # Lista de notificaciones en pantalla
+        self.nombre_popup_activo = False  # Popup para ingresar nombre
+        self.nombre_jugador = ""  # Nombre del jugador
+        self.active_direction = None  # Dirección activa de movimiento
+        
+        # Dimensiones de la ventana
         self.window_width = 800
         self.window_height = 600
-        self.hud_height = 100
+        self.hud_height = 100  # Altura del HUD
+        
+        # Carga íconos para la ventana
         icon1 = pyglet.image.load("assets/repartidor.png")
         icon2 = pyglet.image.load("assets/repartidor.png")
-        super().__init__(self.window_width, self.window_height, "Courier Quest",fixed_frame_cap=60, )
+        
+        # Inicializa la ventana con Arcade
+        super().__init__(self.window_width, self.window_height, "Courier Quest", fixed_frame_cap=60)
         self.set_icon(icon1, icon2) 
         arcade.set_background_color(arcade.color.WHITE)
-        # Estado popup cargar
-        self.popup_cargar_activo = False
-        self.slot_cargar_seleccionado = None
-        # Estado popup guardar
-        self.popup_guardar_activo = False
-        self.slot_seleccionado = None 
+        
+        # Estado de popups adicionales
+        self.popup_cargar_activo = False  # Popup para cargar partida
+        self.slot_cargar_seleccionado = None  # Slot seleccionado para cargar
+        self.popup_guardar_activo = False  # Popup para guardar partida
+        self.slot_seleccionado = None  # Slot seleccionado para guardar
+        
+        # Configuración del mapa y escalas
         map_height = height * CELL_SIZE
         self.scale_x = self.window_width / (width * CELL_SIZE) if width > 0 else 1
         self.scale_y = (self.window_height - self.hud_height) / map_height if height > 0 else 1
+        
+        # Sprite del jugador
         self.player_list = arcade.SpriteList()
         self.player_sprite = Repartidor("assets/repartidor.png", scale=0.8)
-        #inicializa resistencia
-        self.player_sprite.resistencia_obj = Resistencia()
-        self.total_time = 15 * 60
+        self.player_sprite.resistencia_obj = Resistencia()  # Inicializa resistencia del jugador
+        
+        self.total_time = 15 * 60  # Tiempo total del juego en segundos (15 minutos)
+        
+        # Texturas para terrenos
         self.tex_parque = arcade.load_texture("assets/Parque.png")
         self.tex_edificio = arcade.load_texture("assets/Edificio.png")
-        self.pedidos_dict = {} 
-        self.pickup_list = arcade.SpriteList()
-        self.dropoff_list = arcade.SpriteList()
-        self.pedidos_pendientes = []
-        self.pedidos_activos = {}
-        self.pedido_actual = None
-        self.mostrar_pedido = False
-        self.tiempo_ultimo_popup = 0
-        self.tiempo_global = 0  
-        # Inicialización para lógica de fin de juego
+        
+        # Estructuras de datos para pedidos
+        self.pedidos_dict = {}  # Diccionario de pedidos por ID
+        self.pickup_list = arcade.SpriteList()  # Sprites de puntos de recogida
+        self.dropoff_list = arcade.SpriteList()  # Sprites de puntos de entrega
+        self.pedidos_pendientes = []  # Lista de pedidos pendientes
+        self.pedidos_activos = {}  # Pedidos activos (aceptados)
+        self.pedido_actual = None  # Pedido actual mostrado en popup
+        self.mostrar_pedido = False  # Si mostrar popup de pedido
+        self.tiempo_ultimo_popup = 0  # Tiempo del último popup
+        self.tiempo_global = 0  # Tiempo global del juego
+        
+        # Estados para fin de juego
         self.game_over = False
         self.victoria = False
         self.end_message = ""
         self.end_stats = []
         self.pedidos_completados = 0
-        self.undo_stack = []  # Stack de estados para deshacer (lista de dicts)
-        self.undo_limit = 10  # Máximo N pasos a deshacer (ajustable)
-        self.ultimo_movimiento_tiempo = 0  # Para guardar undo solo después de movimientos
-
-
-        # Estado de transición de clima
+        
+        # Sistema de deshacer movimientos
+        self.undo_stack = []  # Pila de estados para deshacer
+        self.undo_limit = 10  # Límite de pasos a deshacer
+        self.ultimo_movimiento_tiempo = 0  # Tiempo del último movimiento para guardar undo
+        
+        # Transición de clima
         self.transicion_clima = {'activa': False}
-
-        # --- Clima dinámico ---
+        
+        # Inicialización del clima dinámico
         condicion_inicial = initial_weather.get("condition", "clear")
         intensidad_inicial = initial_weather.get("intensity", 1.0)
-        duracion_inicial = random.randint(45, 60)  # clima normal
+        duracion_inicial = random.randint(45, 60)  # Duración inicial del clima
         multiplicador = markov.obtenerMultiplicador(condicion_inicial)
         self.clima = Clima(condicion_inicial, intensidad_inicial, duracion_inicial, multiplicador)
         self.markov = markov
-
+        
+        # Carga inicial de pedidos
         self.cargar_pedidos()
+        
+        # Posiciona al jugador en una celda accesible aleatoria
         while True:
             start_row = random.randint(0, ROWS - 1)
             start_col = random.randint(0, COLS - 1)
@@ -190,75 +236,81 @@ class MapaWindow(arcade.Window):
                 self.player_sprite.center_x = (start_col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
                 self.player_sprite.center_y = (height * CELL_SIZE - (start_row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
                 break
+        
+        # Posición objetivo para movimiento suave
         self.target_x = self.player_sprite.center_x
         self.target_y = self.player_sprite.center_y
         self.target_row = self.player_sprite.row
         self.target_col = self.player_sprite.col
-        self.moving = False
-        self.move_speed = 150
+        self.moving = False  # Si el jugador está moviéndose
+        self.move_speed = 150  # Velocidad base de movimiento
+        
+        # Añade el sprite del jugador a la lista
         self.player_list.append(self.player_sprite)
-
-        # --- NUEVO: crear segundo jugador (NPC) estático ---
+        
+        # Inicialización del NPC (bot)
         self.npc_list = arcade.SpriteList()
-        # Busca una celda libre distinta a la del jugador
+        # Posiciona al NPC en una celda accesible aleatoria, distinta al jugador
         while True:
             npc_row = random.randint(0, ROWS - 1)
             npc_col = random.randint(0, COLS - 1)
             if mapa[npc_row][npc_col] != "B" and not (npc_row == self.player_sprite.row and npc_col == self.player_sprite.col):
                 break
-        self.npc_sprite = Repartidor("assets/repartidor.png", scale=0.8)  # usa mismo asset por simplicidad
+        self.npc_sprite = Repartidor("assets/repartidor.png", scale=0.8)  # Usa el mismo asset
         self.npc_sprite.resistencia_obj = Resistencia()
-        # Inicializa coordenadas/estado del NPC
         self.npc_sprite.row = npc_row
         self.npc_sprite.col = npc_col
         self.npc_sprite.inventario = Inventario.Inventario()
         self.npc_sprite.center_x, self.npc_sprite.center_y = self.celda_a_pixeles(npc_row, npc_col)
-        # Marca opcional para identificarlo
-        self.npc_sprite.nombre = "NPC"
+        self.npc_sprite.nombre = "NPC"  # Nombre del NPC
         self.npc_sprite.ingresos = 0
-        self.npc_sprite.reputacion = 70  # Igual que el jugador inicial
+        self.npc_sprite.reputacion = 70  # Reputación inicial igual al jugador
         if not hasattr(self.npc_sprite, "peso_total"):
             self.npc_sprite.peso_total = 0
-        # No mover ni actualizar: sprite estático
         self.npc_list.append(self.npc_sprite)
-
-        # --- NUEVO: estado para popup de dificultad ---
+        
+        # Estados para popup de dificultad del NPC
         self.difficulty_popup_active = False
         self.difficulty_options = ["Fácil", "Normal", "Difícil"]
-        self.difficulty_selected_idx = 1  # por defecto 'Normal'
+        self.difficulty_selected_idx = 1  # Por defecto 'Normal'
         self.npc_difficulty = None
-        self.npc_moving = False  # Para controlar si el NPC se está moviendo (para resistencia)
-        self.npc_pedido_activo = None  # Pedido actual del NPC
-        self.npc_action_timer = 0  # Temporizador para acciones periódicas
-        # Ruta/objetivo del NPC para pathfinding
-        self.npc_path = []
-        self.npc_goal = None
-        # Movimiento suave del NPC (igual a la velocidad del jugador)
-        self.npc_move_speed = self.move_speed
+        
+        # Variables para movimiento del NPC
+        self.npc_moving = False  # Si el NPC se está moviendo
+        self.npc_pedido_activo = None  # Pedido activo del NPC
+        self.npc_action_timer = 0  # Temporizador para acciones del NPC
+        self.npc_path = []  # Ruta del NPC para pathfinding
+        self.npc_goal = None  # Objetivo del NPC
+        self.npc_move_speed = self.move_speed  # Velocidad del NPC igual al jugador
         self.npc_target_row = npc_row
         self.npc_target_col = npc_col
         self.npc_target_x = self.npc_sprite.center_x
         self.npc_target_y = self.npc_sprite.center_y
-        self.npc_smooth_moving = False
-        self.npc_spriteRow = npc_row
+        self.npc_smooth_moving = False  # Movimiento suave del NPC
+        self.npc_spriteRow = npc_row  # Coordenadas auxiliares del NPC
         self.npc_spriteCol = npc_col
 
     def remover_npc(self):
-        """Remueve el NPC del juego cuando se elige jugar sin bot"""
+        """
+        Remueve el NPC del juego cuando se elige jugar sin bot.
+        Limpia variables relacionadas con el NPC.
+        """
         if hasattr(self, 'npc_sprite') and self.npc_sprite:
             self.npc_sprite.remove_from_sprite_lists()
             self.npc_sprite = None
         
-        # Limpiar variables del NPC
+        # Limpia variables del NPC
         self.npc_pedido_activo = None
         self.npc_path = []
         self.npc_goal = None
         self.npc_smooth_moving = False
         self.npc_moving = False
 
-    # --- Popup de cargar partida ---
+    # --- Métodos para popups de carga y guardado ---
     def mostrar_popup_cargar(self):
-        """Activa el popup para seleccionar slot de carga si no hay otros popups activos."""
+        """
+        Activa el popup para seleccionar slot de carga si no hay otros popups activos.
+        """
         if getattr(self, 'mostrar_popup_puntajes', False):
             return
         if getattr(self, 'nombre_popup_activo', False):
@@ -271,6 +323,9 @@ class MapaWindow(arcade.Window):
         self.slot_cargar_seleccionado = None
 
     def draw_popup_cargar(self):
+        """
+        Dibuja el popup de selección de slot para cargar partida.
+        """
         if not getattr(self, 'popup_cargar_activo', False):
             return
 
@@ -308,29 +363,40 @@ class MapaWindow(arcade.Window):
                          arcade.color.LIGHT_GRAY, 12, anchor_x="center")
 
     def cargar_de_slot(self, slot:int):
-        """Placeholder de carga real. Aquí se implementaría la lógica de restaurar el estado."""
+        """
+        Placeholder para cargar partida desde un slot. Implementa la lógica de restauración.
+        
+        Args:
+            slot (int): Número del slot a cargar.
+        """
         print(f"[DEBUG] Cargando partida de slot {slot} (placeholder)")
         self.slot_cargar_seleccionado = slot
         self.popup_cargar_activo = False
 
     def cargar_y_mostrar_puntajes(self):
+        """
+        Carga y muestra los puntajes desde un archivo JSON.
+        """
         ruta = os.path.join('data', 'puntajes.json')
         if os.path.exists(ruta):
-            with open(ruta, 'r', encoding = 'utf-8') as f:
+            with open(ruta, 'r', encoding='utf-8') as f:
                 try:
                     puntajes = json.load(f)
                 except Exception:
                     puntajes = []
         else:
             puntajes = []
-        # Ordena de mayor a menor
-        puntajes.sort(key = lambda p: p['score'], reverse=True)
+        # Ordena de mayor a menor puntaje
+        puntajes.sort(key=lambda p: p['score'], reverse=True)
         self.popup_puntajes = puntajes
         self.mostrar_popup_puntajes = True
     
     # --- Popup de guardar partida ---
     def mostrar_popup_guardar(self):
-        """Activa el popup para seleccionar slot de guardado si no hay otros popups activos."""
+        """
+        Activa el popup para seleccionar slot de guardado si no hay otros popups activos.
+        Evita conflictos con otros popups verificando su estado.
+        """
         if getattr(self, 'mostrar_popup_puntajes', False):
             return
         if getattr(self, 'nombre_popup_activo', False):
@@ -342,6 +408,10 @@ class MapaWindow(arcade.Window):
         self.slot_seleccionado = None
 
     def draw_popup_guardar(self):
+        """
+        Dibuja el popup de selección de slot para guardar partida.
+        Incluye botones para slots 1, 2, 3 y resalta el seleccionado.
+        """
         if not getattr(self, 'popup_guardar_activo', False):
             return
 
@@ -361,7 +431,6 @@ class MapaWindow(arcade.Window):
 
         slot_button_width = 80
         slot_button_height = 50
-        
         
         start_x_buttons = x + ancho / 2 - (slot_button_width * 1.5 + 20) 
 
@@ -383,7 +452,14 @@ class MapaWindow(arcade.Window):
                          arcade.color.LIGHT_GRAY, 12, anchor_x="center")
     
     def guardar_en_slot(self, slot:int):
-        """Guarda el estado actual del juego en binario usando pickle."""
+        """
+        Guarda el estado actual del juego en un archivo binario usando pickle.
+        Incluye datos del jugador, clima, pedidos y sprites de pickup/dropoff.
+        Limpia la pila de undo después de guardar.
+        
+        Args:
+            slot (int): Número del slot (1-3) donde guardar.
+        """
         ruta = os.path.join('data', f'slot{slot}.bin')
         estado = {
             'total_time': self.total_time,
@@ -396,7 +472,7 @@ class MapaWindow(arcade.Window):
                 'nombre': getattr(self.player_sprite, 'nombre', ''),
                 'ingresos': getattr(self.player_sprite, 'ingresos', 0),
                 'reputacion': getattr(self.player_sprite, 'reputacion', 1),
-                # Inventario: lista de IDs de pedidos
+                # Inventario: lista de IDs de pedidos para reconstruir
                 'inventario': [nodo.pedido.id for nodo in self._iterar_inventario()],
                 'racha_entregas': getattr(self.player_sprite, 'racha_entregas_sin_penalizacion', 0),
                 'primera_tardanza': getattr(self.player_sprite, 'primera_tardanza_del_dia_usada', False),
@@ -410,7 +486,7 @@ class MapaWindow(arcade.Window):
             'pedidos_activos': list(self.pedidos_activos.keys()),
             'pedidos_pendientes': [p.id for p in self.pedidos_pendientes],
             'pedido_current': self.pedido_actual.id if self.pedido_actual else None,
-            # Guardar pickups y dropoffs
+            # Guardar posiciones de pickups y dropoffs para recrearlos
             'pickups': [
                 {'pedido_id': s.pedido_id, 'center_x': s.center_x, 'center_y': s.center_y}
                 for s in self.pickup_list
@@ -425,17 +501,29 @@ class MapaWindow(arcade.Window):
         print(f"Guardado en {ruta}")
         self.slot_seleccionado = slot
         self.popup_guardar_activo = False
-        self.undo_stack.clear()
+        self.undo_stack.clear()  # Limpia undo al guardar (nuevo estado base)
 
     def _iterar_inventario(self):
-        """Itera sobre el inventario del jugador y retorna nodos."""
+        """
+        Itera sobre el inventario del jugador y retorna nodos.
+        Útil para serializar el inventario sin depender de la estructura interna.
+        
+        Yields:
+            Nodo del inventario con el pedido.
+        """
         nodo = self.player_sprite.inventario.inicio
         while nodo:
             yield nodo
             nodo = nodo.siguiente
 
     def cargar_de_slot(self, slot:int):
-        """Carga el estado guardado en binario y restaura los atributos principales."""
+        """
+        Carga el estado guardado desde un archivo binario y restaura atributos principales.
+        Reconstruye inventario, clima, pedidos y sprites.
+        
+        Args:
+            slot (int): Número del slot a cargar.
+        """
         ruta = os.path.join('data', f'slot{slot}.bin')
         if not os.path.exists(ruta):
             print(f"No existe guardado en {ruta}")
@@ -443,7 +531,7 @@ class MapaWindow(arcade.Window):
             return
         with open(ruta, 'rb') as f:
             estado = pickle.load(f)
-        # Restaurar atributos principales
+        # Restaurar tiempo y estado básico
         self.total_time = estado.get('total_time', self.total_time)
         player = estado.get('player', {})
         self.player_sprite.row = player.get('row', self.player_sprite.row)
@@ -457,19 +545,19 @@ class MapaWindow(arcade.Window):
         self.player_sprite.racha_entregas_sin_penalizacion = player.get('racha_entregas', 0)
         self.player_sprite.primera_tardanza_del_dia_usada = player.get('primera_tardanza', False)
 
-        # Inventario: reconstruir desde IDs
+        # Reconstruir inventario desde IDs
         self._restaurar_inventario(player.get('inventario', []))
         clima = estado.get('clima', {})
         self.clima.condicion = clima.get('condicion', self.clima.condicion)
         self.clima.intensidad = clima.get('intensidad', self.clima.intensidad)
         self.clima.tiempoRestante = clima.get('tiempoRestante', self.clima.tiempoRestante)
         self.clima.multiplicadorVelocidad = clima.get('multiplicadorVelocidad', self.clima.multiplicadorVelocidad)
-        # Pedidos activos/pendientes
+        # Restaurar listas de pedidos
         self.pedidos_activos = {pid: self.pedidos_dict[pid] for pid in estado.get('pedidos_activos', []) if pid in self.pedidos_dict}
         self.pedidos_pendientes = [self.pedidos_dict[pid] for pid in estado.get('pedidos_pendientes', []) if pid in self.pedidos_dict]
         pid_actual = estado.get('pedido_actual', None)
         self.pedido_actual = self.pedidos_dict[pid_actual] if pid_actual and pid_actual in self.pedidos_dict else None
-        # Restaurar pickups y dropoffs
+        # Recrear sprites de pickups y dropoffs desde posiciones guardadas
         self.pickup_list = arcade.SpriteList()
         for info in estado.get('pickups', []):
             s = arcade.Sprite("assets/pickup.png", scale=0.8)
@@ -490,21 +578,29 @@ class MapaWindow(arcade.Window):
         self.undo_stack.clear()  # Limpia undo al cargar (nuevo estado)
 
     def _restaurar_inventario(self, lista_ids):
-        """Reconstruye el inventario del jugador desde una lista de IDs."""
+        """
+        Reconstruye el inventario del jugador desde una lista de IDs de pedidos.
+        Resetea el inventario y lo rellena con los pedidos correspondientes.
+        
+        Args:
+            lista_ids (list): Lista de IDs de pedidos a restaurar.
+        """
         inv = self.player_sprite.inventario
         inv.inicio = None
-        inv._peso_total = 0  # Asumiendo que _peso_total es el atributo interno; ajusta si es diferente
+        inv._peso_total = 0  # Asumiendo atributo interno; ajustar si difiere
         for pid in lista_ids:
             pedido = self.pedidos_dict.get(pid)
             if pedido:
                 inv.agregar_pedido(pedido)
-        # Actualiza cantidad si es necesario (asumiendo que Inventario tiene _cantidad)
-        inv._cantidad = len(lista_ids)  # Opcional, si usas un atributo _cantidad
+        # Actualizar cantidad si es necesario (asumiendo atributo _cantidad)
+        inv._cantidad = len(lista_ids)  # Opcional, si se usa _cantidad
 
     def guardar_estado_actual(self):
-        """Guarda un snapshot liviano del estado actual para undo.
-        Similar a guardar_en_slot, pero sin sprites pesados."""
-
+        """
+        Guarda un snapshot liviano del estado actual para la funcionalidad de deshacer.
+        Similar a guardar_en_slot pero sin sprites pesados para eficiencia.
+        Serializa y apila en undo_stack, limitando a undo_limit elementos.
+        """
         estado = {
             'total_time': getattr(self, 'total_time', 0),
             'tiempo_global': getattr(self, 'tiempo_global', 0),
@@ -532,27 +628,30 @@ class MapaWindow(arcade.Window):
             'pedido_current': self.pedido_actual.id if self.pedido_actual else None,
             'pedido_activo_entrega': self.pedido_activo_para_entrega.id if self.pedido_activo_para_entrega else None,
             'pedidos_completados': self.pedidos_completados,
-            # No guardamos pickups/dropoffs completos (se recrean en restaurar)
+            # No guarda pickups/dropoffs completos; se recrean al restaurar
         }
 
-        # Serializar a bytes y apilar para undo
+        # Serializar a bytes y apilar
         snapshot = pickle.dumps(estado, protocol=pickle.HIGHEST_PROTOCOL)
 
-        # Asegurar estructura de la pila de undo y el límite
+        # Asegurar estructura de undo_stack y límite
         if not hasattr(self, 'undo_stack') or self.undo_stack is None:
             self.undo_stack = []
         if not hasattr(self, 'undo_limit') or not isinstance(self.undo_limit, int) or self.undo_limit <= 0:
-            self.undo_limit = 20  # valor por defecto razonable
+            self.undo_limit = 20  # Valor por defecto razonable
 
         self.undo_stack.append(snapshot)
 
-        # Limitar a N elementos (elimina el más antiguo)
+        # Limitar a N elementos, eliminando el más antiguo
         if len(self.undo_stack) > self.undo_limit:
             self.undo_stack.pop(0)
     
     def deshacer_paso(self):
-        """Restaura el estado anterior desde el stack de undo.
-        Recrear pickups/dropoffs basados en pedidos."""
+        """
+        Restaura el estado anterior desde la pila de undo.
+        Deserializa el último snapshot y actualiza atributos.
+        Si no hay pasos, muestra notificación.
+        """
         if not self.undo_stack:
             self.agregar_notificacion("No hay pasos para deshacer.", arcade.color.BLACK_OLIVE)
             return
@@ -595,31 +694,37 @@ class MapaWindow(arcade.Window):
             self.pedidos_pendientes = [self.pedidos_dict[pid] for pid in estado.get('pedidos_pendientes', []) if pid in self.pedidos_dict]
             pid_actual = estado.get('pedido_actual', None)
             self.pedido_actual = self.pedidos_dict[pid_actual] if pid_actual and pid_actual in self.pedidos_dict else None
-            # Restaurar pickups y dropoffs
+            # Recrear pickups y dropoffs basados en pedidos activos
             self.pickup_list = arcade.SpriteList()
-            for info in estado.get('pickups', []):
+            for pid in self.pedidos_activos:
+                pedido = self.pedidos_activos[pid]
+                pickup_x, pickup_y = self.celda_a_pixeles(*pedido.coord_recoger)
                 s = arcade.Sprite("assets/pickup.png", scale=0.8)
-                s.center_x = info['center_x']
-                s.center_y = info['center_y']
-                s.pedido_id = info['pedido_id']
+                s.center_x = pickup_x
+                s.center_y = pickup_y
+                s.pedido_id = pid
                 self.pickup_list.append(s)
             self.dropoff_list = arcade.SpriteList()
-            for info in estado.get('dropoffs', []):
+            for pid in self.pedidos_activos:
+                pedido = self.pedidos_activos[pid]
+                dropoff_x, dropoff_y = self.celda_a_pixeles(*pedido.coord_entregar)
                 s = arcade.Sprite("assets/dropoff.png", scale=0.8)
-                s.center_x = info['center_x']
-                s.center_y = info['center_y']
-                s.pedido_id = info['pedido_id']
+                s.center_x = dropoff_x
+                s.center_y = dropoff_y
+                s.pedido_id = pid
                 self.dropoff_list.append(s)
         except Exception as e:
-            print(f"[ERROR] Fallo en cargar_de_slot: {e}")
+            print(f"[ERROR] Fallo en deshacer_paso: {e}")
         finally:
             self.slot_cargar_seleccionado = slot # type: ignore
             self.popup_cargar_activo = False
             self.undo_stack.clear()  # Limpia undo al cargar (nuevo estado)
 
+
     def guardar_puntaje_si_termina(self):
         """
-        Guarda el puntaje final usando Marcador cuando el tiempo llega a cero.
+        Guarda el puntaje final usando la clase Marcador cuando el tiempo llega a cero.
+        Calcula puntaje basado en ingresos y reputación.
         """
         if not hasattr(self, 'marcador'):
             from Marcador import Marcador
@@ -630,25 +735,35 @@ class MapaWindow(arcade.Window):
         puntaje = self.marcador.guardar_puntaje_final(nombre, ingresos, reputacion)
         print(f"Puntaje guardado: {puntaje}")
         
-    def iniciar_transicion_clima(self, nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult):
+    def iniciar_transicion_clima(self):
+        """
+        Inicia una transición de clima, interpolando entre el clima actual y un nuevo clima generado aleatoriamente.
+        """
+        nueva_cond = self.markov.calcularSiguiente(self.clima.condicion)
+        nueva_intensidad = self.markov.sortearIntensidad()
+        nueva_duracion = self.markov.sortearDuracion()
+        nuevo_mult = self.markov.obtenerMultiplicador(nueva_cond)
+
         self.transicion_clima = {
-            'activa': True,
-            't': 0.0,
-            'duracion': random.uniform(3, 5),
-            'inicio': {
-                'condicion': self.clima.condicion,
-                'intensidad': self.clima.intensidad,
-                'multiplicador': self.clima.multiplicadorVelocidad
+            'activa': True,  # Indica que la transición está activa
+            't': 0.0,  # Tiempo transcurrido desde el inicio de la transición
+            'duracion': random.uniform(3, 5),  # Duración de la transición (aleatoria entre 3 y 5 segundos)
+            'inicio': {  # Estado inicial del clima
+                'condicion': self.clima.condicion,  # Condición climática actual
+                'intensidad': self.clima.intensidad,  # Intensidad climática actual
+                'multiplicador': self.clima.multiplicadorVelocidad  # Multiplicador de velocidad actual
             },
-            'fin': {
-                'condicion': nueva_cond,
-                'intensidad': nueva_intensidad,
-                'multiplicador': nuevo_mult,
-                'duracion': nueva_duracion
+            'fin': {  # Estado final del clima
+                'condicion': nueva_cond,  # Nueva condición climática
+                'intensidad': nueva_intensidad,  # Nueva intensidad climática
+                'multiplicador': nuevo_mult,  # Nuevo multiplicador de velocidad
+                'duracion': nueva_duracion  # Duración del nuevo clima
             }
         }
 
     def cambiar_clima(self):
+        # Cambia el clima actual utilizando el modelo de Markov para calcular la siguiente condición,
+        # intensidad, duración y multiplicador de velocidad. Inicia una transición hacia el nuevo clima.
         nueva_cond = self.markov.calcularSiguiente(self.clima.condicion)
         nueva_intensidad = self.markov.sortearIntensidad()
         nueva_duracion = self.markov.sortearDuracion()
@@ -656,12 +771,14 @@ class MapaWindow(arcade.Window):
         self.iniciar_transicion_clima(nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult)
 
     def celda_a_pixeles(self, row, col):
+        # Convierte coordenadas de celda (fila, columna) a coordenadas de píxeles en la ventana.
         x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
         y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
         return x, y
 
     def draw_hud(self):
-        """Dibuja el HUD completo en la parte superior"""
+        # Dibuja el HUD (interfaz de usuario) en la parte superior de la ventana, mostrando información
+        # como pedidos, peso, ingresos, reputación y clima.
         hud_y = self.window_height - self.hud_height
         
         arcade.draw_lbwh_rectangle_filled(
@@ -683,7 +800,6 @@ class MapaWindow(arcade.Window):
         ingresos_text = f"Ingresos: ${self.player_sprite.ingresos:.2f}"
         reputacion_text = f"Reputación: {self.player_sprite.reputacion}"
         clima_text = f"Clima: {self.clima.condicion}\nIntensidad: {self.clima.intensidad:.2f}\nTiempo restante: {int(self.clima.tiempoRestante)}s"
-    
     # Posiciones en el HUD (izquierda para stats del jugador, derecha para timer y clima)
         hud_font_size = 12
         hud_padding = 10
@@ -760,34 +876,31 @@ class MapaWindow(arcade.Window):
         )
 
     def draw_bot_hud(self):
-        """Dibuja un HUD pequeño para las estadísticas del bot en el lado izquierdo"""
+        """
+        Dibuja un HUD pequeño en la esquina inferior derecha de la pantalla para mostrar las estadísticas del bot.
+        Incluye información como pedidos actuales, peso total, ingresos, reputación y resistencia del bot.
+        También muestra una barra visual para la resistencia.
+        """
         if not (self.npc_habilitado and self.npc_sprite):
             return
-            
-        bot_hud_width = 145  
+        
+        # Configuración de dimensiones y posición del HUD
+        bot_hud_width = 145
         bot_hud_height = 120
-        bot_hud_x = self.width - bot_hud_width - 10  
-        bot_hud_y = 20  
+        bot_hud_x = self.width - bot_hud_width - 10
+        bot_hud_y = 20
         hud_font_size = 10
         hud_padding = 8
         
-        arcade.draw_lbwh_rectangle_filled(
-            bot_hud_x, bot_hud_y, bot_hud_width, bot_hud_height,
-            arcade.color.WHITE
-        )
-        arcade.draw_lbwh_rectangle_outline(
-            bot_hud_x, bot_hud_y, bot_hud_width, bot_hud_height,
-            arcade.color.BLACK, 2 
-        )
+        # Fondo y borde del HUD
+        arcade.draw_lbwh_rectangle_filled(bot_hud_x, bot_hud_y, bot_hud_width, bot_hud_height, arcade.color.WHITE)
+        arcade.draw_lbwh_rectangle_outline(bot_hud_x, bot_hud_y, bot_hud_width, bot_hud_height, arcade.color.BLACK, 2)
         
+        # Título del HUD
+        arcade.draw_text("BOT", bot_hud_x + bot_hud_width // 2, bot_hud_y + bot_hud_height - 8,
+                         arcade.color.RED, hud_font_size + 2, anchor_x="center", anchor_y="top")
         
-        arcade.draw_text(
-            "BOT", 
-            bot_hud_x + bot_hud_width // 2, bot_hud_y + bot_hud_height - 8,
-            arcade.color.RED, hud_font_size + 2, 
-            anchor_x="center", anchor_y="top"
-        )
-        
+        # Obtención de estadísticas del bot
         bot_pedidos = []
         nodo = self.npc_sprite.inventario.inicio
         while nodo:
@@ -959,6 +1072,11 @@ class MapaWindow(arcade.Window):
         )
 
     def draw_popup_meta(self):
+        """
+        Dibuja un popup inicial que explica las reglas y la meta del juego.
+        Muestra un mensaje de bienvenida, las reglas principales y la meta de ingresos.
+        También incluye instrucciones para comenzar el juego.
+        """
         ancho, alto = 600, 400
         x = self.width // 2 - ancho // 2
         y = self.height // 2 - alto // 2
@@ -1075,36 +1193,57 @@ class MapaWindow(arcade.Window):
                          x + ancho / 2, y + 18, arcade.color.LIGHT_GRAY, 10, anchor_x="center")
 
     def on_draw(self):
+        """
+        Método principal para dibujar en la ventana del juego.
+        Maneja la lógica de renderizado de todos los elementos del juego, incluyendo popups, HUD, mapa,
+        sprites del jugador y NPC, y otros elementos interactivos.
+        """
         self.clear()
         
-        # PRIMERO: Popup de configuración del bot
+        # Muestra el popup de configuración del bot al inicio, si está activo
         if getattr(self, 'mostrar_config_bot_popup', False):
             self.draw_config_bot_popup()
             return
         
+        # Si el juego terminó, muestra la pantalla de fin de juego
         if self.game_over:
             self._draw_end_screen()
             return
+
+        # Muestra el popup de meta si está activo
         if self.mostrar_meta_popup:
             self.draw_popup_meta()
             return 
+
+        # Muestra el popup de puntajes si está activo
         if getattr(self, 'mostrar_popup_puntajes', False):
             self.draw_popup_puntajes()
             return
+
+        # Muestra el popup de carga si está activo
         if getattr(self, 'popup_cargar_activo', False):
             self.draw_popup_cargar()
             return
+
+        # Muestra el popup de guardado si está activo
         if getattr(self, 'popup_guardar_activo', False):
             self.draw_popup_guardar()
             return
+
+        # Muestra el popup para ingresar el nombre del jugador si está activo
         if self.nombre_popup_activo:
             self.draw_nombre_popup()
             return
-        # --- NUEVO: mostrar popup dificultad si está activo (después del nombre) ---
+
+        # Muestra el popup de selección de dificultad del NPC si está activo
         if getattr(self, 'difficulty_popup_active', False):
             self.draw_difficulty_popup()
             return
+
+        # Dibuja el HUD (interfaz de usuario) en la parte superior de la pantalla
         self.draw_hud()
+
+        # Dibuja el mapa de la ciudad, celda por celda, con texturas o colores según el tipo de terreno
         for row in range(ROWS):
             for col in range(COLS):
                 x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
@@ -1119,10 +1258,10 @@ class MapaWindow(arcade.Window):
                     color = arcade.color.GRAY if tipo == "C" else arcade.color.BLACK
                     arcade.draw_rect_filled(rect, color)
                 arcade.draw_rect_outline(rect, arcade.color.BLACK, 1)
-        # --- NUEVO: dibujar NPC (segundo jugador) solo si está habilitado ---
+
+        # Dibuja el NPC (si está habilitado) y su etiqueta
         if getattr(self, 'npc_habilitado', True) and hasattr(self, 'npc_sprite') and self.npc_sprite:
             self.npc_list.draw()
-            # Dibuja etiqueta encima del NPC
             try:
                 for npc in self.npc_list:
                     arcade.draw_text(getattr(npc, "nombre", ""), npc.center_x, npc.center_y + 24,
@@ -1130,8 +1269,11 @@ class MapaWindow(arcade.Window):
             except Exception:
                 pass
 
+        # Dibuja el sprite del jugador y las listas de pickups y dropoffs
         self.player_list.draw()
         self.pickup_list.draw()
+
+        # Resalta el sprite del dropoff activo con un efecto de pulso
         sprite_activo = None
         escala_original = 0.8 
         if self.pedido_activo_para_entrega:
@@ -1146,17 +1288,26 @@ class MapaWindow(arcade.Window):
         if sprite_activo:
             sprite_activo.scale = escala_original
 
+        # Dibuja el popup de pedido si está activo
         self.draw_popup_pedido()
+
+        # Dibuja las notificaciones en pantalla
         self.draw_notificaciones()
+
+        # Dibuja el popup de inventario si está activo
         if self.mostrar_inventario_popup:
             self.draw_inventario_popup()
             return
         
+        # Dibuja el HUD del bot (si está habilitado)
         self.draw_bot_hud()
 
 
     def restart_game(self):
-        """Reinicia el juego reseteando todas las variables de estado a sus valores iniciales."""
+        """
+        Reinicia el juego reseteando todas las variables de estado a sus valores iniciales.
+        Esto incluye el tiempo, los pedidos, el inventario del jugador, y la posición inicial.
+        """
         print("--- Reiniciando el juego ---")
 
         self.game_over = False
@@ -1183,8 +1334,10 @@ class MapaWindow(arcade.Window):
         self.player_sprite.inventario._peso_total = 0.0
         self.player_sprite.resistencia_obj.set_resistencia(100) 
 
-        # Vuelve a cargar los 5 pedidos originales desde la API o backup
+        # Vuelve a cargar los pedidos originales desde la API o backup
         self.cargar_pedidos() 
+
+        # Posiciona al jugador en una celda accesible aleatoria
         while True:
             start_row = random.randint(0, ROWS - 1)
             start_col = random.randint(0, COLS - 1)
@@ -1198,47 +1351,47 @@ class MapaWindow(arcade.Window):
         self.target_x = self.player_sprite.center_x
         self.target_y = self.player_sprite.center_y
         self.moving = False
-        self.undo_stack.clear()  # Limpia undo al reiniciar
+        self.undo_stack.clear()  # Limpia la pila de deshacer al reiniciar
 
     def _force_redraw(self):
-        """Fuerza un redibujo inmediato para cerrar popups (llamado después de reinicio)."""
+        """
+        Fuerza un redibujo inmediato para cerrar popups o actualizar la pantalla.
+        Esto se utiliza después de reiniciar el juego.
+        """
         arcade.schedule(lambda dt: None, 0.0) 
 
 
     def on_key_press(self, key, modifiers):
-        # --- PRIORIDAD 1: manejar popup de configuración del bot PRIMERO ---
+        """
+        Maneja las pulsaciones de teclas para controlar el juego.
+        Incluye lógica para manejar popups, movimiento del jugador, y acciones como guardar/cargar partida.
+        """
+        # Manejo del popup de configuración del bot
         if getattr(self, 'mostrar_config_bot_popup', False):
-            # navegación
             if key in (arcade.key.UP, arcade.key.LEFT):
                 self.config_bot_seleccion = (self.config_bot_seleccion - 1) % len(self.config_bot_opciones)
                 return
             if key in (arcade.key.DOWN, arcade.key.RIGHT):
                 self.config_bot_seleccion = (self.config_bot_seleccion + 1) % len(self.config_bot_opciones)
                 return
-            # confirmar
             if key == arcade.key.ENTER:
-                self.npc_habilitado = (self.config_bot_seleccion == 0)  # 0 = CON Bot, 1 = SIN Bot
+                self.npc_habilitado = (self.config_bot_seleccion == 0)
                 self.mostrar_config_bot_popup = False
-                
                 if self.npc_habilitado:
-                    # Si elige CON Bot, mostrar popup de dificultad
                     self.difficulty_popup_active = True
                 else:
-                    # Si elige SIN Bot, remover el NPC y mostrar popup de meta
                     self.remover_npc()
                     self.mostrar_meta_popup = True
                 return
         
-        # --- PRIORIDAD 2: manejar popup de dificultad segundo ---
+        # Manejo del popup de dificultad del NPC
         if getattr(self, 'difficulty_popup_active', False):
-            # navegación
             if key in (arcade.key.UP, arcade.key.LEFT):
                 self.difficulty_selected_idx = (self.difficulty_selected_idx - 1) % len(self.difficulty_options)
                 return
             if key in (arcade.key.DOWN, arcade.key.RIGHT):
                 self.difficulty_selected_idx = (self.difficulty_selected_idx + 1) % len(self.difficulty_options)
                 return
-            # selección directa
             if key == arcade.key.KEY_1:
                 self.difficulty_selected_idx = 0
                 return
@@ -1248,7 +1401,6 @@ class MapaWindow(arcade.Window):
             elif key == arcade.key.KEY_3:
                 self.difficulty_selected_idx = 2
                 return
-            # confirmar
             if key == arcade.key.ENTER:
                 self.npc_difficulty = self.difficulty_options[self.difficulty_selected_idx]
                 self.difficulty_popup_active = False
@@ -1256,43 +1408,42 @@ class MapaWindow(arcade.Window):
                     self.npc_sprite.nombre = f"NPC ({self.npc_difficulty})"
                 except Exception:
                     pass
-                # Después de elegir dificultad, mostrar popup de meta
                 self.mostrar_meta_popup = True
                 return
-            # cancelar
             if key == arcade.key.ESCAPE:
                 self.difficulty_popup_active = False
                 self.npc_difficulty = None
                 self.agregar_notificacion("Selección de dificultad cancelada.", arcade.color.LIGHT_GRAY)
                 return
 
+        # Manejo del popup de meta
         if self.mostrar_meta_popup and key == arcade.key.ENTER:
             self.mostrar_meta_popup = False
-            # Después del popup de meta, ir al popup de nombre
             self.pedir_nombre_popup()
             return
 
-        # Verificación de game_over (al inicio, para pausar todo y manejar reinicio)
+        # Manejo de reinicio o cierre del juego si terminó
         if self.game_over:
             if key == arcade.key.SPACE or key == arcade.key.ESCAPE:
                 self.close()
             elif key == arcade.key.R:
-                # Reiniciar juego 
                 self.restart_game()
                 self._force_redraw()
             return 
-        # Manejo de popups
+
+        # Manejo del popup de nombre
         elif self.nombre_popup_activo:
             if key == arcade.key.ENTER:
                 if self.nombre_jugador.strip():
                     self.nombre_popup_activo = False
                     self.player_sprite.nombre = self.nombre_jugador.strip()
-                    # Ya no activar popup de dificultad aquí - se hace antes en la configuración del bot
             elif key == arcade.key.BACKSPACE:
                 self.nombre_jugador = self.nombre_jugador[:-1]
             elif 32 <= key <= 126 and len(self.nombre_jugador) < 16:
                 self.nombre_jugador += chr(key)
             return
+
+        # Manejo del popup de guardado
         elif self.popup_guardar_activo:
             if key == arcade.key.ESCAPE:
                 self.popup_guardar_activo = False
@@ -1301,6 +1452,7 @@ class MapaWindow(arcade.Window):
             elif key == arcade.key.KEY_3: self.guardar_en_slot(3)
             return
 
+        # Manejo del popup de carga
         elif self.popup_cargar_activo:
             if key == arcade.key.ESCAPE:
                 self.popup_cargar_activo = False
@@ -1309,6 +1461,7 @@ class MapaWindow(arcade.Window):
             elif key == arcade.key.KEY_3: self.cargar_de_slot(3)
             return
 
+        # Manejo del popup de inventario
         if self.mostrar_inventario_popup:
             if key == arcade.key.I or key == arcade.key.ESCAPE:
                 self.mostrar_inventario_popup = False
@@ -1333,7 +1486,6 @@ class MapaWindow(arcade.Window):
 
                 elif key == arcade.key.ENTER:
                     self.pedido_activo_para_entrega = self.lista_inventario_visible[self.inventario_seleccion_idx]
-                    ######
                     print(f"Pedido seleccionado para entrega: {self.pedido_activo_para_entrega.id}")
                     self.mostrar_inventario_popup = False
                 elif key == arcade.key.C:
@@ -1354,7 +1506,7 @@ class MapaWindow(arcade.Window):
                         self.mostrar_inventario_popup = False
             return
 
-        #Depuracion
+        # Depuración: forzar victoria o derrota
         if key == arcade.key.V:
             print("[DEBUG] Forzando victoria...")
             self.player_sprite.ingresos = self.meta_ingresos + 1 
@@ -1367,6 +1519,7 @@ class MapaWindow(arcade.Window):
             self.check_game_end()
             return
 
+        # Mostrar inventario
         if key == arcade.key.I:
             self.mostrar_inventario_popup = True
             self.inventario_seleccion_idx = 0 
@@ -1375,40 +1528,52 @@ class MapaWindow(arcade.Window):
             else:
                 self.lista_inventario_visible = self.player_sprite.inventario.acomodar_deadline()
             return
-        #Deshacer movimiento with 'U'
+
+        # Deshacer movimiento
         if key == arcade.key.U:
             if self.game_over or self.nombre_popup_activo or self.popup_guardar_activo or self.popup_cargar_activo or self.mostrar_inventario_popup or self.mostrar_pedido or self.mostrar_meta_popup:
                 return  
             self.deshacer_paso()
             return
 
-        #Mostrar popup de puntajes
+        # Mostrar popup de puntajes
         if key == arcade.key.P:
             self.cargar_y_mostrar_puntajes()
             return
+
+        # Mostrar popup de carga
         if key == arcade.key.L:
             self.mostrar_popup_cargar()
             return
+
+        # Mostrar popup de guardado
         if key == arcade.key.G:
             self.mostrar_popup_guardar()
             return
+
+        # Movimiento del jugador
         if key in (arcade.key.UP, arcade.key.DOWN, arcade.key.LEFT, arcade.key.RIGHT):
             self.active_direction = key
         self.try_move()
 
     def on_key_release(self, key, modifiers):
+        """
+        Maneja la liberación de teclas para controlar el juego.
+        Incluye lógica para cerrar popups y detener el movimiento del jugador.
+        """
         if self.nombre_popup_activo or self.popup_guardar_activo or self.popup_cargar_activo or self.mostrar_inventario_popup:
             return
-        # Cierra popup de puntajes con ESC
+
+        # Cierra el popup de puntajes con ESC
         if getattr(self, 'mostrar_popup_puntajes', False):
             if key == arcade.key.ESCAPE:
                 self.mostrar_popup_puntajes = False
             return
-        # Popup pedido
+
+        # Manejo del popup de pedido
         if self.mostrar_pedido and self.pedido_actual:
             if key == arcade.key.A: 
                 pedido = self.pedido_actual
-                # Solo permitir aceptar si el pickup aún existe
                 existe_pickup = any(s.pedido_id == pedido.id for s in self.pickup_list)
                 if not existe_pickup:
                     print(f"Pedido {pedido.id} aceptado")
@@ -1428,11 +1593,19 @@ class MapaWindow(arcade.Window):
                 print(f"Pedido {self.pedido_actual.id} rechazado")
                 self.mostrar_pedido = False
                 self.pedido_actual = None
+
+        # Detiene el movimiento del jugador al soltar la tecla
         if self.active_direction == key:
             self.active_direction = None
 
         #Manejo de movimiento
+    # Este bloque de código maneja el movimiento del jugador y la interacción con el mapa.
+    # Incluye métodos para intentar moverse en una dirección específica, convertir coordenadas
+    # entre celdas y píxeles, encontrar celdas accesibles cercanas, y crear sprites de pickup y dropoff.
+
     def try_move(self):
+        # Intenta mover al jugador en la dirección activa, verificando si puede moverse
+        # y si la celda objetivo es accesible. Actualiza las coordenadas objetivo y activa el movimiento.
         if self.moving or self.active_direction is None or not self.player_sprite.puede_moverse():
             if not self.player_sprite.puede_moverse():
                 print("¡Agotado! Recupera resistencia al 30% para moverte.")
@@ -1469,22 +1642,20 @@ class MapaWindow(arcade.Window):
             self.moving = True
 
     def celda_a_pixeles(self, row, col):
-        """Convierte coordenadas de celda a coordenadas de píxeles"""
+        # Convierte coordenadas de celda (fila, columna) a coordenadas de píxeles en la ventana.
         x = (col * CELL_SIZE + CELL_SIZE // 2) * self.scale_x
         y = (height * CELL_SIZE - (row * CELL_SIZE + CELL_SIZE // 2)) * self.scale_y
         return x, y
     
     def pixeles_a_celda(self, x, y):
-        """Convierte coordenadas de píxeles a coordenadas de celda"""
+        # Convierte coordenadas de píxeles en la ventana a coordenadas de celda (fila, columna).
         col = int(x / self.scale_x / CELL_SIZE)
         row = int((height * CELL_SIZE - y / self.scale_y) / CELL_SIZE)
         return row, col
     
     def encontrar_celda_accesible_mas_cercana(self, row, col):
-        """
-        Encuentra la celda accesible (no edificio) más cercana a las coordenadas dadas.
-        Si la celda original no es un edificio, devuelve las coordenadas originales.
-        """
+        # Encuentra la celda accesible más cercana a una celda dada. Si la celda original no es un edificio,
+        # devuelve las coordenadas originales. Si es un edificio, busca en un radio creciente.
         if 0 <= row < ROWS and 0 <= col < COLS and mapa[row][col] != "B":
             return row, col
         
@@ -1505,8 +1676,8 @@ class MapaWindow(arcade.Window):
         return row, col
     
     def crear_pedido(self, pickup_x, pickup_y, dropoff_x, dropoff_y, pedido_id):
-        """Crea sprites de pickup/dropoff. Si la celda original es un edificio,
-        coloca el sprite en la celda accesible más cercana."""
+        # Crea los sprites de pickup y dropoff para un pedido. Si las coordenadas originales
+        # están en un edificio, ajusta las posiciones a la celda accesible más cercana.
         try:
             p_row, p_col = self.pixeles_a_celda(pickup_x, pickup_y)
             if 0 <= p_row < ROWS and 0 <= p_col < COLS and mapa[p_row][p_col] == "B":
@@ -1537,7 +1708,12 @@ class MapaWindow(arcade.Window):
 
 
     def cargar_pedidos(self):
-        # --- intenta API, si falla usa backup ---
+        """
+        Carga los pedidos desde la API o desde un archivo de respaldo en caso de fallo.
+        Los pedidos incluyen información como peso, deadline, pago, prioridad, y coordenadas de recogida y entrega.
+        Si el deadline ya pasó, se asigna un tiempo aleatorio para evitar inconsistencias.
+        Los pedidos se almacenan en un diccionario y en una lista de pendientes.
+        """
         try:
             response = requests.get(f"{BASE_URL}/city/jobs", timeout=5).json()
         except Exception as e:
@@ -1574,6 +1750,12 @@ class MapaWindow(arcade.Window):
         save_backup()
 
     def on_update(self, delta_time):
+        """
+        Actualiza el estado del juego en cada frame.
+        Maneja el tiempo restante, el clima dinámico, el movimiento del jugador y del NPC, 
+        las interacciones con pickups y dropoffs, y verifica las condiciones de fin de juego.
+        También recicla pedidos cuando se agotan los pendientes.
+        """
         if self.game_over:
             return
         self.actualizar_notificaciones(delta_time)
@@ -1584,21 +1766,19 @@ class MapaWindow(arcade.Window):
                 self.total_time = 0
                 print("¡El tiempo se ha agotado! Fin del juego.")
                 self.close()
-        # --- Clima dinámico ---
+        # Manejo del clima dinámico y transiciones
         if self.transicion_clima.get('activa', False):
             t = self.transicion_clima['t'] + delta_time
             dur = self.transicion_clima['duracion']
             prog = min(t / dur, 1.0)
             ini = self.transicion_clima['inicio']
             fin = self.transicion_clima['fin']
-            # Interpolación lineal
             intensidad = ini['intensidad'] + (fin['intensidad'] - ini['intensidad']) * prog
             mult = ini['multiplicador'] + (fin['multiplicador'] - ini['multiplicador']) * prog
             self.clima.condicion = fin['condicion'] if prog >= 1.0 else ini['condicion']
             self.clima.intensidad = intensidad
             self.clima.multiplicadorVelocidad = mult
             if prog >= 1.0:
-                # Fin de transición: setea clima final completo
                 self.clima.reiniciar(fin['condicion'], fin['intensidad'], fin['duracion'], fin['multiplicador'])
                 self.transicion_clima['activa'] = False
             else:
@@ -1616,7 +1796,7 @@ class MapaWindow(arcade.Window):
             self.player_sprite.col = self.target_col
             print("¡Agotado! Descansando hasta recuperar 30% de resistencia.")
 
-        # Manejo de movimiento suave
+        # Movimiento suave del jugador
         if self.moving:
             dx = self.target_x - self.player_sprite.center_x
             dy = self.target_y - self.player_sprite.center_y
@@ -1627,7 +1807,6 @@ class MapaWindow(arcade.Window):
                 mult_clima *= (1 - self.clima.intensidad * 0.5)
             mult_clima = max(mult_clima, 0.1)
 
-            # Reduccion por peso de velocidad
             peso_total = self.player_sprite.inventario.peso_total()
             peso_maximo = self.player_sprite.inventario.peso_maximo
             speed_reduction_factor = 0.8
@@ -1636,7 +1815,6 @@ class MapaWindow(arcade.Window):
 
             mult_resistencia = self.player_sprite.resistencia_obj.get_multiplicador_velocidad()
 
-            # Reduccion por superficie
             mult_surface_actual = self.obtener_multiplicador_superficie(self.player_sprite.row, self.player_sprite.col)
             mult_surface_dest = self.obtener_multiplicador_superficie(self.target_row, self.target_col)
             mult_surface = (mult_surface_actual + mult_surface_dest) / 2.0
@@ -1663,61 +1841,50 @@ class MapaWindow(arcade.Window):
             else:
                 self.player_sprite.center_x += velocidad_actual_por_frame * dx / dist
                 self.player_sprite.center_y += velocidad_actual_por_frame * dy / dist
-    # --- Guardar undo después de un movimiento exitoso ---
+
+        # Guardar estado para deshacer
         if not self.moving and self.tiempo_global > self.ultimo_movimiento_tiempo + 0.5:
             if self.active_direction is not None or self.player_sprite.row != self.target_row or self.player_sprite.col != self.target_col:
                 self.guardar_estado_actual()
                 self.ultimo_movimiento_tiempo = self.tiempo_global
-        pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
 
-        # Verificación adicional para pickups en edificios
+        # Manejo de pickups y dropoffs
+        pickups_hit = arcade.check_for_collision_with_list(self.player_sprite, self.pickup_list)
         if not pickups_hit:
             for pickup in self.pickup_list:
                 pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
-                
                 if (0 <= pickup_row < ROWS and 0 <= pickup_col < COLS and 
                     mapa[pickup_row][pickup_col] == "B"):
-                    
                     celda_accesible_row, celda_accesible_col = self.encontrar_celda_accesible_mas_cercana(pickup_row, pickup_col)
-                    
                     if (self.player_sprite.row == celda_accesible_row and 
                         self.player_sprite.col == celda_accesible_col):
                         pickups_hit.append(pickup)
-        # Manejo de pickups y dropoffs
         if pickups_hit:
             for pickup in pickups_hit:
                 pedido_obj = self.pedidos_dict[pickup.pedido_id]
                 if self.player_sprite.pickup(pedido_obj, self.total_time):
                     self.agregar_notificacion(f"Recogido: {pedido_obj.id}", arcade.color.WHITE_SMOKE)
                     pickup.remove_from_sprite_lists()
-
                     if pedido_obj.id in self.pedidos_activos:
                         del self.pedidos_activos[pedido_obj.id]
                 else:
                     self.agregar_notificacion("¡Inventario Lleno!", arcade.color.RED)
         else:
             dropoffs_hit = arcade.check_for_collision_with_list(self.player_sprite, self.dropoff_list)
-            
             if not dropoffs_hit and self.pedido_activo_para_entrega:
                 for dropoff in self.dropoff_list:
                     if dropoff.pedido_id == self.pedido_activo_para_entrega.id:
                         dropoff_row, dropoff_col = self.pixeles_a_celda(dropoff.center_x, dropoff.center_y)
-                        
                         if (0 <= dropoff_row < ROWS and 0 <= dropoff_col < COLS and 
                             mapa[dropoff_row][dropoff_col] == "B"):
-
                             celda_accesible_row, celda_accesible_col = self.encontrar_celda_accesible_mas_cercana(dropoff_row, dropoff_col)
-                            
                             if (self.player_sprite.row == celda_accesible_row and 
                                 self.player_sprite.col == celda_accesible_col):
                                 dropoffs_hit.append(dropoff)
                                 break
-            # Manejo de entregas
             for dropoff in dropoffs_hit:
                 if self.pedido_activo_para_entrega and dropoff.pedido_id == self.pedido_activo_para_entrega.id:
-                    
                     mensajes = self.player_sprite.dropoff(self.pedido_activo_para_entrega.id, self.total_time)
-                    
                     if mensajes:
                         for texto, color in mensajes:
                             self.agregar_notificacion(texto, color)
@@ -1726,10 +1893,10 @@ class MapaWindow(arcade.Window):
                     dropoff.remove_from_sprite_lists()
 
         self.tiempo_global += delta_time
-        
-        if self.check_game_end():
 
+        if self.check_game_end():
             return
+
         # Verifica expiración de pedidos activos
         pedidos_expirados = []
         for pedido_id, pedido in self.pedidos_activos.items():
@@ -1737,7 +1904,6 @@ class MapaWindow(arcade.Window):
                 print(f"¡El pedido {pedido.id} ha expirado!")
                 self.player_sprite.reputacion -= 6
                 self.agregar_notificacion(f"Pedido Expirado: -6 Rep.", arcade.color.RED)
-                
                 pedidos_expirados.append(pedido_id)
         for pedido_id in pedidos_expirados:
             del self.pedidos_activos[pedido_id]
@@ -1747,14 +1913,14 @@ class MapaWindow(arcade.Window):
             for sprite in self.dropoff_list:
                 if sprite.pedido_id == pedido_id:
                     sprite.remove_from_sprite_lists()
-        # Logica para enciclar
+
+        # Recicla pedidos cuando se agotan los pendientes
         if not self.mostrar_pedido:
             pedido_encontrado_para_mostrar = None
             for pedido in self.pedidos_pendientes:
                 if self.tiempo_global >= pedido.release_time:
                     pedido_encontrado_para_mostrar = pedido
                     break 
-
             if pedido_encontrado_para_mostrar:
                 self.pedido_actual = pedido_encontrado_para_mostrar
                 self.mostrar_pedido = True
@@ -1765,19 +1931,21 @@ class MapaWindow(arcade.Window):
                     pedido.release_time = self.tiempo_global + ( (i + 1) * 30 )
                     nueva_duracion_segundos = random.randint(180, 300) 
                     pedido.deadline_contador = self.total_time - nueva_duracion_segundos
-
                 random.shuffle(pedidos_reciclados)
                 self.pedidos_pendientes = pedidos_reciclados
-        self.check_game_end()
 
+        self.check_game_end()
         self.actualizar_npc(delta_time)
         self._actualizar_movimiento_npc(delta_time)
 
     def check_game_end(self):
-        """Verifica si el juego terminó por victoria o derrota."""
+        """
+        Verifica si el juego ha terminado por victoria o derrota.
+        La victoria ocurre al alcanzar la meta de ingresos.
+        La derrota ocurre si se agota el tiempo o si la reputación cae por debajo de 20.
+        """
         if self.game_over:
             return True
-        # VICTORIA
         if self.player_sprite.ingresos >= self.meta_ingresos:
             self.victoria = True
             self.game_over = True
@@ -1785,13 +1953,11 @@ class MapaWindow(arcade.Window):
             self.end_stats = self._get_end_stats()
             self.guardar_puntaje_si_termina()
             return True
-        # DERROTA
         mensaje_derrota = ""
         if self.total_time <= 0:
             mensaje_derrota = "¡Derrota! Se te ha agotado el tiempo."
         elif self.player_sprite.reputacion < 20:
             mensaje_derrota = "¡Derrota! Tu reputación ha bajado a menos de 20."
-
         if mensaje_derrota:
             self.victoria = False
             self.game_over = True
@@ -1799,9 +1965,7 @@ class MapaWindow(arcade.Window):
             self.end_stats = self._get_end_stats()
             self.guardar_puntaje_si_termina()
             return True
-
         return False
- 
     def obtener_multiplicador_superficie(self, row, col):
         """Devuelve el multiplicador de velocidad según la superficie de la celda."""
         if 0 <= row < ROWS and 0 <= col < COLS:
@@ -1905,10 +2069,10 @@ class MapaWindow(arcade.Window):
                     self.npc_pedido_activo = pedido
                     print(f"[NPC DEBUG] Pedido asignado {pedido.id}")
         
-        # Check if NPC can move (resistance check like player)
+
             if not self.npc_sprite.puede_moverse():
                 print(f"[NPC DEBUG] NPC exhausted, resting...")
-            # Stop movement if exhausted
+
                 if self.npc_smooth_moving:
                     self.npc_smooth_moving = False
                     self.npc_moving = False

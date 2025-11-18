@@ -1,3 +1,4 @@
+
 import requests
 import arcade
 import random
@@ -496,6 +497,23 @@ class MapaWindow(arcade.Window):
                 for s in self.dropoff_list
             ],
         }
+        
+        # Agregar datos del NPC solo si existe
+        if hasattr(self, 'npc_sprite') and self.npc_sprite is not None:
+            estado['npc'] = {
+                'row': getattr(self.npc_sprite, 'row', 0),
+                'col': getattr(self.npc_sprite, 'col', 0),
+                'center_x': getattr(self.npc_sprite, 'center_x', 0),
+                'center_y': getattr(self.npc_sprite, 'center_y', 0),
+                'resistencia': self.npc_sprite.get_resistencia_actual() if hasattr(self.npc_sprite, 'get_resistencia_actual') else 100,
+                'nombre': getattr(self.npc_sprite, 'nombre', 'NPC'),
+                'ingresos': getattr(self.npc_sprite, 'ingresos', 0),
+                'reputacion': getattr(self.npc_sprite, 'reputacion', 70),
+                'inventario': [nodo.pedido.id for nodo in self._iterar_inventario_npc()],
+                'racha_entregas': getattr(self.npc_sprite, 'racha_entregas_sin_penalizacion', 0),
+                'primera_tardanza': getattr(self.npc_sprite, 'primera_tardanza_del_dia_usada', False),
+            }
+        
         with open(ruta, 'wb') as f:
             pickle.dump(estado, f)
         print(f"Guardado en {ruta}")
@@ -515,6 +533,21 @@ class MapaWindow(arcade.Window):
         while nodo:
             yield nodo
             nodo = nodo.siguiente
+
+    def _iterar_inventario_npc(self):
+        """
+        Itera sobre el inventario del NPC y retorna nodos.
+        Útil para serializar el inventario del NPC sin depender de la estructura interna.
+        
+        Yields:
+            Nodo del inventario con el pedido.
+        """
+        if (hasattr(self, 'npc_sprite') and self.npc_sprite is not None and 
+            hasattr(self.npc_sprite, 'inventario') and hasattr(self.npc_sprite.inventario, 'inicio')):
+            nodo = self.npc_sprite.inventario.inicio
+            while nodo:
+                yield nodo
+                nodo = nodo.siguiente
 
     def cargar_de_slot(self, slot:int):
         """
@@ -547,6 +580,33 @@ class MapaWindow(arcade.Window):
 
         # Reconstruir inventario desde IDs
         self._restaurar_inventario(player.get('inventario', []))
+        
+        # Restaurar datos del NPC si existen y el NPC está presente
+        npc_data = estado.get('npc', {})
+        if npc_data and hasattr(self, 'npc_sprite') and self.npc_sprite is not None:
+            self.npc_sprite.row = npc_data.get('row', self.npc_sprite.row)
+            self.npc_sprite.col = npc_data.get('col', self.npc_sprite.col)
+            self.npc_sprite.center_x = npc_data.get('center_x', self.npc_sprite.center_x)
+            self.npc_sprite.center_y = npc_data.get('center_y', self.npc_sprite.center_y)
+            
+            # Restaurar resistencia del NPC
+            if hasattr(self.npc_sprite, 'resistencia_obj'):
+                self.npc_sprite.resistencia_obj.set_resistencia(npc_data.get('resistencia', 100))
+            
+            # Restaurar stats del NPC
+            self.npc_sprite.nombre = npc_data.get('nombre', getattr(self.npc_sprite, 'nombre', 'NPC'))
+            self.npc_sprite.ingresos = npc_data.get('ingresos', getattr(self.npc_sprite, 'ingresos', 0))
+            self.npc_sprite.reputacion = npc_data.get('reputacion', getattr(self.npc_sprite, 'reputacion', 70))
+            self.npc_sprite.racha_entregas_sin_penalizacion = npc_data.get('racha_entregas', 0)
+            self.npc_sprite.primera_tardanza_del_dia_usada = npc_data.get('primera_tardanza', False)
+            
+            # Restaurar inventario del NPC
+            self._restaurar_inventario_npc(npc_data.get('inventario', []))
+            
+            # Actualizar variables de posición del NPC para el sistema de movimiento
+            self.npc_spriteRow = self.npc_sprite.row
+            self.npc_spriteCol = self.npc_sprite.col
+        
         clima = estado.get('clima', {})
         self.clima.condicion = clima.get('condicion', self.clima.condicion)
         self.clima.intensidad = clima.get('intensidad', self.clima.intensidad)
@@ -594,6 +654,26 @@ class MapaWindow(arcade.Window):
                 inv.agregar_pedido(pedido)
         # Actualizar cantidad si es necesario (asumiendo atributo _cantidad)
         inv._cantidad = len(lista_ids)  # Opcional, si se usa _cantidad
+
+    def _restaurar_inventario_npc(self, lista_ids):
+        """
+        Reconstruye el inventario del NPC desde una lista de IDs de pedidos.
+        Resetea el inventario y lo rellena con los pedidos correspondientes.
+        
+        Args:
+            lista_ids (list): Lista de IDs de pedidos a restaurar en el inventario del NPC.
+        """
+        if (hasattr(self, 'npc_sprite') and self.npc_sprite is not None and 
+            hasattr(self.npc_sprite, 'inventario')):
+            inv = self.npc_sprite.inventario
+            inv.inicio = None
+            inv._peso_total = 0  # Asumiendo atributo interno; ajustar si difiere
+            for pid in lista_ids:
+                pedido = self.pedidos_dict.get(pid)
+                if pedido:
+                    inv.agregar_pedido(pedido)
+            # Actualizar cantidad si es necesario (asumiendo atributo _cantidad)
+            inv._cantidad = len(lista_ids)  # Opcional, si se usa _cantidad
 
     def guardar_estado_actual(self):
         """
@@ -735,14 +815,19 @@ class MapaWindow(arcade.Window):
         puntaje = self.marcador.guardar_puntaje_final(nombre, ingresos, reputacion)
         print(f"Puntaje guardado: {puntaje}")
         
-    def iniciar_transicion_clima(self):
+    def iniciar_transicion_clima(self, nueva_cond=None, nueva_intensidad=None, nueva_duracion=None, nuevo_mult=None):
         """
         Inicia una transición de clima, interpolando entre el clima actual y un nuevo clima generado aleatoriamente.
         """
-        nueva_cond = self.markov.calcularSiguiente(self.clima.condicion)
-        nueva_intensidad = self.markov.sortearIntensidad()
-        nueva_duracion = self.markov.sortearDuracion()
-        nuevo_mult = self.markov.obtenerMultiplicador(nueva_cond)
+        # Si no se proporcionan parámetros, generar valores aleatorios
+        if nueva_cond is None:
+            nueva_cond = self.markov.calcularSiguiente(self.clima.condicion)
+        if nueva_intensidad is None:
+            nueva_intensidad = self.markov.sortearIntensidad()
+        if nueva_duracion is None:
+            nueva_duracion = self.markov.sortearDuracion()
+        if nuevo_mult is None:
+            nuevo_mult = self.markov.obtenerMultiplicador(nueva_cond)
 
         self.transicion_clima = {
             'activa': True,  # Indica que la transición está activa
@@ -769,6 +854,373 @@ class MapaWindow(arcade.Window):
         nueva_duracion = self.markov.sortearDuracion()
         nuevo_mult = self.markov.obtenerMultiplicador(nueva_cond)
         self.iniciar_transicion_clima(nueva_cond, nueva_intensidad, nueva_duracion, nuevo_mult)
+
+    def _evaluar_pedidos_normal(self, pedidos_disponibles):
+        """
+        Evaluación ambiciosa para dificultad Normal.
+        Usa función de puntuación: score = α*(expected payout) – β*(distance cost) – γ*(weather penalty)
+        Con horizonte de anticipación de 2-3 acciones.
+        """
+        mejor_pedido = None
+        mejor_score = float('-inf')
+        
+        # Parámetros de la función de evaluación
+        alpha = 1.0  # Peso para ganancia esperada
+        beta = 0.3   # Peso para costo de distancia
+        gamma = 0.2  # Peso para penalidad por clima
+        
+        for pedido in pedidos_disponibles:
+            score = self._calcular_score_pedido_normal(pedido, alpha, beta, gamma)
+            if score > mejor_score:
+                mejor_score = score
+                mejor_pedido = pedido
+        
+        return mejor_pedido
+    
+    def _calcular_score_pedido_normal(self, pedido, alpha, beta, gamma):
+        """
+        Calcula el score de un pedido considerando pago, distancia y clima.
+        """
+        # Expected payout (ganancia esperada)
+        expected_payout = pedido.pago
+        
+        # Distance cost (costo de distancia) - simulando horizonte de anticipación
+        pos_actual = (self.npc_spriteRow, self.npc_spriteCol)
+        
+        # Evaluar el costo de ir a recoger + entregar (2-3 acciones por delante)
+        dist_recoger = self._distancia_manhattan(pos_actual, pedido.coord_recoger)
+        dist_entregar = self._distancia_manhattan(pedido.coord_recoger, pedido.coord_entregar)
+        distance_cost = dist_recoger + dist_entregar
+        
+        # Weather penalty (penalidad por clima)
+        weather_penalty = self._calcular_penalidad_clima()
+        
+        # Función de puntuación
+        score = alpha * expected_payout - beta * distance_cost - gamma * weather_penalty
+        
+        return score
+    
+    def _calcular_penalidad_clima(self):
+        """
+        Calcula penalidad basada en las condiciones climáticas actuales.
+        """
+        penalidad = 0
+        
+        # Penalidad base por condición climática
+        if self.clima.condicion == "Rain":
+            penalidad += 15 * self.clima.intensidad
+        elif self.clima.condicion == "Snow":
+            penalidad += 20 * self.clima.intensidad
+        elif self.clima.condicion == "Fog":
+            penalidad += 10 * self.clima.intensidad
+        elif self.clima.condicion == "Wind":
+            penalidad += 8 * self.clima.intensidad
+        # Clear no tiene penalidad adicional
+        
+        # Penalidad adicional por multiplicador de velocidad
+        if self.clima.multiplicadorVelocidad < 1.0:
+            penalidad += (1.0 - self.clima.multiplicadorVelocidad) * 25
+        
+        return penalidad
+
+    def _evaluar_movimientos_normal(self, pos_actual, objetivo):
+        """
+        Evaluación greedy best-first de movimientos potenciales para Normal.
+        Evalúa cada movimiento posible y selecciona el mejor basado en una función de score.
+        """
+        cur_r, cur_c = pos_actual
+        tgt_r, tgt_c = objetivo
+        
+        # Si ya estamos en el objetivo, no moverse
+        if pos_actual == objetivo:
+            return pos_actual
+        
+        # Obtener todos los movimientos posibles (vecinos válidos)
+        vecinos = self._npc_neighbors(pos_actual)
+        
+        if not vecinos:
+            return pos_actual  # No hay movimientos válidos
+        
+        # Evaluar cada movimiento potencial
+        mejor_movimiento = pos_actual
+        mejor_score = float('-inf')
+        
+        for vecino in vecinos:
+            score = self._evaluar_movimiento_normal(vecino, objetivo, pos_actual)
+            if score > mejor_score:
+                mejor_score = score
+                mejor_movimiento = vecino
+        
+        return mejor_movimiento
+    
+    def _evaluar_movimiento_normal(self, posicion_candidata, objetivo, posicion_actual):
+        """
+        Evalúa un movimiento candidato basado en múltiples factores.
+        """
+        # Factor 1: Progreso hacia el objetivo (distancia Manhattan)
+        dist_nueva = self._distancia_manhattan(posicion_candidata, objetivo)
+        dist_actual = self._distancia_manhattan(posicion_actual, objetivo)
+        progreso_score = (dist_actual - dist_nueva) * 10  # Positivo si nos acercamos
+        
+        # Factor 2: Penalidad por clima en la nueva posición
+        # (Simulamos que ciertas posiciones pueden ser más afectadas por el clima)
+        weather_score = -self._calcular_penalidad_clima() * 0.1
+        
+        # Factor 3: Evitar quedarse en la misma posición (fomentar movimiento)
+        movement_score = 1 if posicion_candidata != posicion_actual else -5
+        
+        # Factor 4: Preferir movimientos que nos acerquen directamente (heurística direccional)
+        r_diff = objetivo[0] - posicion_candidata[0]
+        c_diff = objetivo[1] - posicion_candidata[1]
+        r_move = posicion_candidata[0] - posicion_actual[0]
+        c_move = posicion_candidata[1] - posicion_actual[1]
+        
+        # Bonificación si el movimiento va en la dirección correcta
+        direction_score = 0
+        if (r_diff > 0 and r_move > 0) or (r_diff < 0 and r_move < 0):
+            direction_score += 2
+        if (c_diff > 0 and c_move > 0) or (c_diff < 0 and c_move < 0):
+            direction_score += 2
+        
+        total_score = progreso_score + weather_score + movement_score + direction_score
+        
+        return total_score
+
+    def _optimizar_secuencia_entregas_dificil(self, pedidos_disponibles):
+        """
+        Optimización basada en grafos para dificultad Difícil.
+        Considera múltiples pedidos y optimiza la secuencia de entregas para minimizar desplazamientos.
+        """
+        if not pedidos_disponibles:
+            return None
+            
+        # Si solo hay un pedido, usar lógica simple mejorada
+        if len(pedidos_disponibles) == 1:
+            pedido_evaluado = self._evaluar_pedido_individual_dificil(pedidos_disponibles[0])
+            if pedido_evaluado:
+                return pedido_evaluado
+            # Si falla la evaluación individual, usar fallback básico
+            return pedidos_disponibles[0]
+        
+        # Para múltiples pedidos, optimizar secuencia usando algoritmo TSP simplificado
+        mejor_secuencia = self._calcular_mejor_secuencia_tsp(pedidos_disponibles)
+        
+        if mejor_secuencia:
+            # Retornar el primer pedido de la secuencia óptima
+            return mejor_secuencia[0]
+        
+        # Fallback a evaluación básica si TSP falla
+        print("[NPC DEBUG] TSP falló, usando selección básica para Difícil")
+        return self._fallback_seleccion_dificil(pedidos_disponibles)
+    
+    def _evaluar_pedido_individual_dificil(self, pedido):
+        """
+        Evaluación individual de pedido para Difícil usando Dijkstra.
+        """
+        # Buscar la posición real del sprite de pickup
+        pickup_pos = None
+        for pickup in self.pickup_list:
+            if pickup.pedido_id == pedido.id:
+                pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
+                pickup_pos = (pickup_row, pickup_col)
+                break
+        
+        if pickup_pos is None:
+            print(f"[NPC DEBUG] No se encontró pickup para pedido {pedido.id}")
+            return None
+            
+        # Calcular costo total: ir a pickup + delivery
+        pos_actual = (self.npc_spriteRow, self.npc_spriteCol)
+        costo_pickup = self._dijkstra_cost(pos_actual, pickup_pos)
+        
+        if costo_pickup is not None:
+            print(f"[NPC DEBUG] Pedido {pedido.id} evaluado exitosamente, costo pickup: {costo_pickup}")
+            return pedido
+        else:
+            print(f"[NPC DEBUG] No se pudo calcular ruta para pedido {pedido.id}")
+            return None
+    
+    def _fallback_seleccion_dificil(self, pedidos_disponibles):
+        """
+        Selección de fallback para Difícil cuando Dijkstra/TSP falla.
+        Usa distancia Manhattan como aproximación.
+        """
+        mejor_pedido = None
+        mejor_score = float('inf')
+        
+        pos_actual = (self.npc_spriteRow, self.npc_spriteCol)
+        
+        for pedido in pedidos_disponibles:
+            # Buscar posición del pickup
+            pickup_pos = None
+            for pickup in self.pickup_list:
+                if pickup.pedido_id == pedido.id:
+                    pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
+                    pickup_pos = (pickup_row, pickup_col)
+                    break
+            
+            if pickup_pos:
+                # Usar distancia Manhattan como aproximación
+                dist_pickup = self._distancia_manhattan(pos_actual, pickup_pos)
+                dist_delivery = self._distancia_manhattan(pickup_pos, pedido.coord_entregar)
+                
+                # Score simple: distancia total / pago
+                score = (dist_pickup + dist_delivery) / max(pedido.pago, 1)
+                
+                if score < mejor_score:
+                    mejor_score = score
+                    mejor_pedido = pedido
+        
+        print(f"[NPC DEBUG] Fallback seleccionó pedido: {mejor_pedido.id if mejor_pedido else 'None'}")
+        return mejor_pedido
+    
+    def _calcular_mejor_secuencia_tsp(self, pedidos):
+        """
+        Implementación de TSP (Traveling Salesman Problem) simplificado para optimizar
+        la secuencia de recolección y entrega de múltiples pedidos.
+        """
+        if len(pedidos) <= 1:
+            return pedidos
+            
+        # Limitar a máximo 3 pedidos para evitar explosión combinatoria
+        pedidos_limitados = pedidos[:3] if len(pedidos) > 3 else pedidos
+        
+        pos_inicial = (self.npc_spriteRow, self.npc_spriteCol)
+        
+        # Obtener posiciones reales de todos los pedidos
+        pedidos_con_posiciones = []
+        for pedido in pedidos_limitados:
+            pickup_pos = None
+            for pickup in self.pickup_list:
+                if pickup.pedido_id == pedido.id:
+                    pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
+                    pickup_pos = (pickup_row, pickup_col)
+                    break
+            
+            if pickup_pos:
+                pedidos_con_posiciones.append((pedido, pickup_pos))
+        
+        if not pedidos_con_posiciones:
+            print("[NPC DEBUG] TSP: No se encontraron posiciones válidas")
+            return pedidos_limitados
+        
+        # Si solo hay un pedido con posición válida, devolverlo
+        if len(pedidos_con_posiciones) == 1:
+            return [pedidos_con_posiciones[0][0]]
+        
+        # Para 2 pedidos, comparar directamente sin permutaciones completas
+        if len(pedidos_con_posiciones) == 2:
+            return self._comparar_dos_pedidos(pos_inicial, pedidos_con_posiciones)
+        
+        # Para 3+ pedidos, usar TSP simplificado con timeout
+        try:
+            import itertools
+            mejor_costo = float('inf')
+            mejor_secuencia = None
+            
+            # Límite de iteraciones para evitar bloqueo
+            iteraciones = 0
+            max_iteraciones = 6  # 3! = 6 permutaciones máximo
+            
+            for secuencia in itertools.permutations(pedidos_con_posiciones):
+                iteraciones += 1
+                if iteraciones > max_iteraciones:
+                    break
+                    
+                costo_total = self._calcular_costo_secuencia_seguro(pos_inicial, secuencia)
+                if costo_total < mejor_costo:
+                    mejor_costo = costo_total
+                    mejor_secuencia = [item[0] for item in secuencia]
+            
+            print(f"[NPC DEBUG] TSP completado: mejor costo={mejor_costo}, iteraciones={iteraciones}")
+            
+            return mejor_secuencia if mejor_secuencia else [item[0] for item in pedidos_con_posiciones]
+            
+        except Exception as e:
+            print(f"[NPC DEBUG] Error en TSP: {e}")
+            return [item[0] for item in pedidos_con_posiciones]
+    
+    def _comparar_dos_pedidos(self, pos_inicial, pedidos_con_pos):
+        """
+        Compara dos pedidos para determinar el orden óptimo.
+        """
+        pedido1, pos1 = pedidos_con_pos[0]
+        pedido2, pos2 = pedidos_con_pos[1]
+        
+        # Calcular costo de secuencia 1 -> 2
+        costo_1_2 = self._calcular_costo_secuencia_seguro(pos_inicial, [(pedido1, pos1), (pedido2, pos2)])
+        
+        # Calcular costo de secuencia 2 -> 1
+        costo_2_1 = self._calcular_costo_secuencia_seguro(pos_inicial, [(pedido2, pos2), (pedido1, pos1)])
+        
+        if costo_1_2 <= costo_2_1:
+            return [pedido1, pedido2]
+        else:
+            return [pedido2, pedido1]
+    
+    def _calcular_costo_secuencia(self, pos_inicial, secuencia_pedidos):
+        """
+        Calcula el costo total de una secuencia de pedidos (pickup -> delivery para cada uno).
+        """
+        costo_total = 0
+        pos_actual = pos_inicial
+        
+        for pedido, pickup_pos in secuencia_pedidos:
+            # Costo de ir a recoger
+            costo_pickup = self._dijkstra_cost(pos_actual, pickup_pos)
+            if costo_pickup is None:
+                return float('inf')  # Ruta inválida
+            
+            costo_total += costo_pickup
+            
+            # Costo de entregar
+            costo_delivery = self._dijkstra_cost(pickup_pos, pedido.coord_entregar)
+            if costo_delivery is None:
+                return float('inf')  # Ruta inválida
+            
+            costo_total += costo_delivery
+            
+            # Considerar beneficio del pago (mayor pago = menor costo efectivo)
+            beneficio = pedido.pago * 0.1  # Factor de ajuste
+            costo_total -= beneficio
+            
+            # Actualizar posición para siguiente iteración
+            pos_actual = pedido.coord_entregar
+        
+        return costo_total
+
+    def _calcular_costo_secuencia_seguro(self, pos_inicial, secuencia_pedidos):
+        """
+        Versión segura de cálculo de costo que usa Manhattan como fallback si Dijkstra falla.
+        """
+        costo_total = 0
+        pos_actual = pos_inicial
+        
+        for pedido, pickup_pos in secuencia_pedidos:
+            # Intentar usar Dijkstra, fallback a Manhattan
+            costo_pickup = self._dijkstra_cost(pos_actual, pickup_pos)
+            if costo_pickup is None:
+                # Fallback a distancia Manhattan
+                costo_pickup = self._distancia_manhattan(pos_actual, pickup_pos)
+            
+            costo_total += costo_pickup
+            
+            # Costo de entregar  
+            costo_delivery = self._dijkstra_cost(pickup_pos, pedido.coord_entregar)
+            if costo_delivery is None:
+                # Fallback a distancia Manhattan
+                costo_delivery = self._distancia_manhattan(pickup_pos, pedido.coord_entregar)
+            
+            costo_total += costo_delivery
+            
+            # Considerar beneficio del pago
+            beneficio = pedido.pago * 0.1
+            costo_total -= beneficio
+            
+            # Actualizar posición para siguiente iteración
+            pos_actual = pedido.coord_entregar
+        
+        return costo_total
 
     def celda_a_pixeles(self, row, col):
         # Convierte coordenadas de celda (fila, columna) a coordenadas de píxeles en la ventana.
@@ -1189,7 +1641,7 @@ class MapaWindow(arcade.Window):
             arcade.draw_lbwh_rectangle_outline(x + 40, oy, ancho - 80, 30, outline, 2)
             arcade.draw_text(f"{i+1}. {opt}", x + 60, oy + 15, arcade.color.WHITE, 14, anchor_x="left", anchor_y="center")
 
-        arcade.draw_text("←/→ o ↑/↓ para navegar, [1-3] seleccionar, Enter confirmar, ESC cancelar",
+        arcade.draw_text("←/→ o ↑/↓ para navegar, [1-3] seleccionar, Enter confirmar",
                          x + ancho / 2, y + 18, arcade.color.LIGHT_GRAY, 10, anchor_x="center")
 
     def on_draw(self):
@@ -2124,7 +2576,10 @@ class MapaWindow(arcade.Window):
                         nueva_pos = self.calcular_movimiento_npc(objetivo)
                     # print(f"[NPC DEBUG] A* falló, usando movimiento simple hacia {objetivo}")
                 else:  # Normal
-                    nueva_pos = self.calcular_movimiento_npc(objetivo)
+                    if self.npc_difficulty == "Normal":
+                        nueva_pos = self._evaluar_movimientos_normal(start, objetivo)
+                    else:
+                        nueva_pos = self.calcular_movimiento_npc(objetivo)
                 # print(f"[NPC DEBUG] Movimiento simple desde {start} hacia {objetivo} -> {nueva_pos}")
             elif self.npc_difficulty == "Difícil":
             # Sin pedido en Difícil: quieto recuperando energía
@@ -2263,42 +2718,12 @@ class MapaWindow(arcade.Window):
             return random.choice(disponibles)
     
         if self.npc_difficulty == "Normal":
-            # Selección basada en pago y distancia Manhattan
-            return max(
-                disponibles,
-                key=lambda p: (p.pago) / (self._distancia_manhattan((self.npc_spriteRow, self.npc_spriteCol), p.coord_recoger) + 1)
-            )
+            # Evaluación ambiciosa con horizonte de anticipación
+            return self._evaluar_pedidos_normal(disponibles)
     
         if self.npc_difficulty == "Difícil":
-            # Selección basada en Dijkstra (ruta más corta)
-            mejor_pedido = None
-            mejor_costo = float("inf")
-    
-            for pedido in disponibles:
-                # Buscar la posición real del sprite de pickup
-                pickup_pos = None
-                for pickup in self.pickup_list:
-                    if pickup.pedido_id == pedido.id:
-                        pickup_row, pickup_col = self.pixeles_a_celda(pickup.center_x, pickup.center_y)
-                        pickup_pos = (pickup_row, pickup_col)
-                        break
-                
-                if pickup_pos is None:
-                    continue  # Skip si no encontramos el sprite
-                
-                # Calcular el costo de la ruta más corta hacia el pickup real
-                costo_ruta = self._dijkstra_cost((self.npc_spriteRow, self.npc_spriteCol), pickup_pos)
-                print(f"[NPC DEBUG] Dijkstra para pedido {pedido.id}: costo={costo_ruta}")
-                
-                if costo_ruta is not None:
-                    # Evaluar el pedido basado en el pago y el costo de la ruta
-                    costo_total = costo_ruta / (pedido.pago + 0.1)  # Simplificado
-                    if costo_total < mejor_costo:
-                        mejor_costo = costo_total
-                        mejor_pedido = pedido
-    
-            print(f"[NPC DEBUG] Dijkstra eligió pedido: {mejor_pedido.id if mejor_pedido else 'None'}")
-            return mejor_pedido
+            # Optimización basada en grafos con secuencia de entregas
+            return self._optimizar_secuencia_entregas_dificil(disponibles)
     
         return None
     
